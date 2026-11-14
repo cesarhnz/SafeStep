@@ -111,5 +111,5 @@ alerts/config.json
 alerts/data/
 
 
-analytics/.env.example
+analytics/.env
 analytics/.ingest_offset
