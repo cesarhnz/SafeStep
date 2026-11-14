@@ -1,0 +1,18 @@
+{
+  "ntfy_server": "https://ntfy.sh",
+  "ntfy_topic": "safestep-CHANGE-ME-to-something-random",
+  "ntfy_escalation_topic": "",
+  "ntfy_ack_topic": "",
+  "ntfy_token": "",
+  "home_name": "Grandma's house",
+  "host": "0.0.0.0",
+  "port": 8080,
+  "api_key": "",
+  "confirm_window_s": 30,
+  "escalate_after_s": 120,
+  "max_escalations": 3,
+  "hazard_cooldown_s": 300,
+  "heartbeat_timeout_s": 60,
+  "event_log": "data/events.jsonl",
+  "dry_run": false
+}
