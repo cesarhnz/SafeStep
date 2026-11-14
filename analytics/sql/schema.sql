@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS safestep.lifecycle_events (
   actor              STRING,     -- who cancelled / acknowledged / resolved
   outcome            STRING,
   raw                STRING      -- full original JSON row
-);
+) USING DELTA;
 
 -- One row per incident, using the agreed schema's field names.
 -- alert_sent (ntfy accepted an alert) and acknowledged_at are derived from the lifecycle rows.
