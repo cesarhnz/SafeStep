@@ -25,6 +25,8 @@ import logging
 import os
 import re
 import time
+import math
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 
@@ -34,10 +36,10 @@ HERE = Path(__file__).resolve().parent
 LOG_PATH = Path(os.getenv("SAFESTEP_EVENT_LOG", HERE.parent / "alerts" / "data" / "events.jsonl"))
 CHECKPOINT = Path(os.getenv("SAFESTEP_CHECKPOINT", HERE / ".ingest_offset"))
 TABLE = os.getenv("SAFESTEP_TABLE", "safestep.lifecycle_events")
-BATCH = int(os.getenv("INGEST_BATCH", "50"))  # 23 params per row; keep batches modest
+BATCH = int(os.getenv("INGEST_BATCH", "10"))
 POLL_S = float(os.getenv("INGEST_POLL_S", "5"))
 
-if not re.fullmatch(r"\w+(\.\w+){0,2}", TABLE):
+if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){1,2}", TABLE):
     raise SystemExit(f"bad SAFESTEP_TABLE: {TABLE!r}")
 
 COLUMNS = [
@@ -50,6 +52,14 @@ COLUMNS = [
     ("immobility_seconds", "DOUBLE"), ("actor", "STRING"), ("outcome", "STRING"),
     ("raw", "STRING"),
 ]
+
+
+# Native SQL parameters are limited to 255 per statement.
+MAX_BATCH = 255 // len(COLUMNS)
+if not 1 <= BATCH <= MAX_BATCH:
+    raise SystemExit(f"INGEST_BATCH must be between 1 and {MAX_BATCH}")
+if not math.isfinite(POLL_S) or POLL_S <= 0:
+    raise SystemExit("INGEST_POLL_S must be a positive finite number")
 
 
 # ---- parsing -----------------------------------------------------------------
@@ -79,8 +89,7 @@ def row_to_record(line: bytes) -> dict | None:
         if not isinstance(row, dict):
             raise ValueError("not an object")
     except ValueError as e:
-        log.warning("skipping unreadable line (%s): %.80r", e, line)
-        return None
+        raise ValueError("Unreadable event log row; repair the source before retrying") from e
     return {
         "row_id": hashlib.sha1(line).hexdigest(),
         "logged_at": _ts(row.get("logged_at")),
@@ -109,6 +118,9 @@ def row_to_record(line: bytes) -> dict | None:
 
 
 def build_merge(records: list[dict]) -> tuple[str, dict]:
+    records = list({r["row_id"]: r for r in records}.values())
+    if not records or len(records) > MAX_BATCH:
+        raise ValueError(f"MERGE needs 1 to {MAX_BATCH} unique records")
     selects, params = [], {}
     for i, rec in enumerate(records):
         cols = []
@@ -122,56 +134,78 @@ def build_merge(records: list[dict]) -> tuple[str, dict]:
 
 
 # ---- reading + checkpoint ------------------------------------------------------
+def _identity() -> dict:
+    stat = LOG_PATH.stat()
+    return {"path": str(LOG_PATH.resolve()), "device": stat.st_dev, "inode": stat.st_ino,
+            "table": TABLE}
+
+
 def _load_offset() -> int:
     try:
-        return int(CHECKPOINT.read_text().strip())
-    except (FileNotFoundError, ValueError):
+        checkpoint = json.loads(CHECKPOINT.read_text())
+    except FileNotFoundError:
         return 0
+    except ValueError:
+        log.warning("Unreadable checkpoint; replaying log (MERGE is idempotent)")
+        return 0
+    # Legacy integer checkpoints cannot identify the source or destination.
+    if not isinstance(checkpoint, dict):
+        return 0
+    identity = _identity()
+    if any(checkpoint.get(k) != v for k, v in identity.items()):
+        log.warning("Log identity or destination changed; replaying from zero")
+        return 0
+    offset = checkpoint.get("offset", 0)
+    if not isinstance(offset, int) or offset < 0 or offset > LOG_PATH.stat().st_size:
+        return 0
+    return offset
 
 
-def _save_offset(n: int) -> None:
+def _save_offset(n: int, identity: dict) -> None:
+    CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
     tmp = CHECKPOINT.with_suffix(".tmp")
-    tmp.write_text(str(n))
+    tmp.write_text(json.dumps({**identity, "offset": n}))
     tmp.replace(CHECKPOINT)
 
 
-def read_new(offset: int) -> list[tuple[bytes, int]]:
-    """Complete lines after `offset` as (line, offset_after_line). A line the
-    alert service is still writing (no trailing newline yet) is left for next time."""
-    if not LOG_PATH.exists():
-        return []
-    if offset > LOG_PATH.stat().st_size:
-        log.warning("event log is smaller than the checkpoint; restarting from 0")
-        offset = 0
+def read_new(offset: int):
+    """Stream complete lines, retaining a partially written line for the next poll."""
     with LOG_PATH.open("rb") as f:
         f.seek(offset)
-        buf = f.read()
-    out, i = [], 0
-    while True:
-        j = buf.find(b"\n", i)
-        if j < 0:
-            break
-        out.append((buf[i:j], offset + j + 1))
-        i = j + 1
-    return out
+        while True:
+            line = f.readline()
+            if not line or not line.endswith(b"\n"):
+                break
+            yield line[:-1], f.tell()
 
 
 # ---- shipping ----------------------------------------------------------------
 def _connect():
     from databricks import sql  # imported lazily so --dry-run needs no install
+    host = os.getenv("DATABRICKS_SERVER_HOSTNAME") or os.getenv("DATABRICKS_HOST", "")
+    host = urlparse(host).netloc if "://" in host else host
+    if not host or not os.getenv("DATABRICKS_HTTP_PATH") or not os.getenv("DATABRICKS_TOKEN"):
+        raise ValueError("Set DATABRICKS_SERVER_HOSTNAME, DATABRICKS_HTTP_PATH and DATABRICKS_TOKEN")
     return sql.connect(
-        server_hostname=os.environ["DATABRICKS_HOST"],
+        server_hostname=host,
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
 
 
 def run_once(connect=_connect, dry_run: bool = False) -> int:
-    pending = read_new(_load_offset())
+    if not LOG_PATH.exists():
+        log.info("Waiting for event log: %s", LOG_PATH)
+        return 0
+    identity = _identity()
+    pending = iter(read_new(_load_offset()))
     shipped, conn = 0, None
     try:
-        for start in range(0, len(pending), BATCH):
-            chunk = pending[start:start + BATCH]
+        from itertools import islice
+        while True:
+            chunk = list(islice(pending, BATCH))
+            if not chunk:
+                break
             records = [r for r in (row_to_record(line) for line, _ in chunk if line.strip()) if r]
             if records:
                 sql_text, params = build_merge(records)
@@ -183,19 +217,44 @@ def run_once(connect=_connect, dry_run: bool = False) -> int:
                         cur.execute(sql_text, params)
                 shipped += len(records)
             if not dry_run:
-                _save_offset(chunk[-1][1])  # only after the batch succeeded
+                _save_offset(chunk[-1][1], identity)  # only after the batch succeeded
     finally:
         if conn is not None:
             conn.close()
     return shipped
 
 
+def initialize(connect=_connect, dry_run=False):
+    """Create the destination schema, Delta table and incident view."""
+    namespace = TABLE.rsplit(".", 1)[0]
+    source = (HERE / "sql" / "schema.sql").read_text()
+    source = source.replace("safestep.lifecycle_events", TABLE)
+    source = source.replace("safestep.incidents", namespace + ".incidents")
+    source = source.replace("CREATE SCHEMA IF NOT EXISTS safestep", "CREATE SCHEMA IF NOT EXISTS " + namespace)
+    source = "\n".join(line.split("--", 1)[0] for line in source.splitlines())
+    statements = [stmt.strip() for stmt in source.split(";") if stmt.strip()]
+    if dry_run:
+        print(";\n\n".join(statements) + ";")
+        return
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+    finally:
+        conn.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--init", action="store_true", help="create schema, table and incident view, then exit")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    if args.init:
+        initialize(dry_run=args.dry_run)
+        return
     while True:
         try:
             n = run_once(dry_run=args.dry_run)
