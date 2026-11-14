@@ -49,3 +49,5 @@ python3 -m unittest discover -s analytics/tests -v
 ```
 
 Connector reference: [Databricks SQL Connector](https://docs.databricks.com/aws/en/dev-tools/python-sql-connector), [native parameter limits](https://github.com/databricks/databricks-sql-python/blob/main/docs/parameters.md).
+
+The SQL connector uses the `certifi` CA bundle for TLS verification. If your network requires an organization CA bundle, export `DATABRICKS_CA_BUNDLE=/absolute/path/to/ca-bundle.pem`. Certificate verification stays enabled.

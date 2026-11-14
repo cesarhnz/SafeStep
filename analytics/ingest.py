@@ -182,6 +182,7 @@ def read_new(offset: int):
 # ---- shipping ----------------------------------------------------------------
 def _connect():
     from databricks import sql  # imported lazily so --dry-run needs no install
+    import certifi
     host = os.getenv("DATABRICKS_SERVER_HOSTNAME") or os.getenv("DATABRICKS_HOST", "")
     host = urlparse(host).netloc if "://" in host else host
     if not host or not os.getenv("DATABRICKS_HTTP_PATH") or not os.getenv("DATABRICKS_TOKEN"):
@@ -190,6 +191,7 @@ def _connect():
         server_hostname=host,
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
+        _tls_trusted_ca_file=os.getenv("DATABRICKS_CA_BUNDLE") or certifi.where(),
     )
 
 

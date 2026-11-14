@@ -1,1 +1,2 @@
 databricks-sql-connector>=3.0
+certifi>=2024.2.2
