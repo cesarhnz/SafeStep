@@ -26,6 +26,19 @@ Features
   * Every lifecycle change is appended to data/events.jsonl for analytics.
     This never blocks or delays an alert.
 
+Changes in this version
+  * Accepts the team-agreed detector schema (see contract.py); the old
+    {"type": ...} payloads still work.
+  * Retries with the same event_id are ignored; falls with person_detected=false are ignored.
+  * A second fall in a room is only treated as "the same emergency" for
+    fall_dedupe_s seconds. Before, one unacknowledged fall silenced every later
+    fall in that room until the service restarted.
+  * Logs `delivered` / `delivery_failed` after each alert, so analytics can tell
+    "we decided to alert" from "ntfy actually accepted it".
+  * A malformed confidence/timestamp can no longer stop an alert from being built.
+  * Timer and watchdog threads log errors instead of dying silently.
+  * GET /health no longer reveals the private ntfy topic; GET /incidents needs the API key.
+
 Standard library only. Python 3.9+.
 """
 
@@ -40,9 +53,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from contract import to_internal
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -66,6 +82,7 @@ DEFAULT_CONFIG = {
     "confirm_window_s": 30,           # time the person has to cancel a fall alert
     "escalate_after_s": 120,          # no ack in this time -> escalate
     "max_escalations": 3,
+    "fall_dedupe_s": 600,             # a repeat fall in the same room within this long is the same incident
     "hazard_cooldown_s": 300,         # same hazard in same room is muted this long
     "heartbeat_timeout_s": 60,        # camera silent this long -> offline alert
     "event_log": "data/events.jsonl",
@@ -270,6 +287,9 @@ def publish_async(*args, **kwargs) -> None:
 #        |  cancel                      |  ack / cancel / resolve
 #        v                              v
 #    cancelled                acknowledged / resolved
+#
+# Extra lifecycle rows in the event log (they don't change `status`):
+#   delivered / delivery_failed: whether ntfy accepted an alert message
 
 ACTIVE = {"pending_confirmation", "alerted", "escalated"}
 
@@ -279,6 +299,10 @@ class Incident:
         self.id = secrets.token_hex(3).upper()
         self.type = evt["type"]
         self.spec = spec
+        self.source_event_id = evt.get("event_id")      # the detector's own id
+        self.device_id = evt.get("device_id")
+        self.person_detected = evt.get("person_detected")
+        self.immobility_seconds = evt.get("immobility_seconds")
         self.room = evt.get("room") or "Unknown room"
         self.zone = evt.get("zone")                  # e.g. "near the couch"
         self.camera_id = evt.get("camera_id") or "cam-1"
@@ -289,6 +313,7 @@ class Incident:
         self.lat = evt.get("lat")
         self.lng = evt.get("lng")
         self.detected_at = evt.get("timestamp") or datetime.now(timezone.utc).isoformat()
+        self.created = time.monotonic()
         self.status = "new"
         self.escalations = 0
         self.acked_by = None
@@ -301,7 +326,7 @@ class Incident:
 
     def when(self) -> str:
         try:
-            dt = datetime.fromisoformat(self.detected_at.replace("Z", "+00:00")).astimezone()
+            dt = datetime.fromisoformat(str(self.detected_at).replace("Z", "+00:00")).astimezone()
         except ValueError:
             dt = datetime.now()
         return dt.strftime("%I:%M:%S %p, %a %b %d").lstrip("0")
@@ -320,7 +345,10 @@ class Incident:
         lines.append(f"Where: {self.where()}")
         lines.append(f"When: {self.when()}")
         if self.confidence is not None:
-            lines.append(f"Detection confidence: {round(float(self.confidence) * 100)}%")
+            try:
+                lines.append(f"Detection confidence: {round(float(self.confidence) * 100)}%")
+            except (TypeError, ValueError):
+                pass  # a bad confidence value must not stop the alert
         if self.details:
             lines.append(f"Details: {self.details}")
         lines += ["", "What to do:"]
@@ -348,20 +376,34 @@ class Incident:
     def to_dict(self) -> dict:
         return {
             "incident_id": self.id, "type": self.type, "status": self.status,
+            "source_event_id": self.source_event_id, "device_id": self.device_id,
+            "person_detected": self.person_detected,
+            "immobility_seconds": self.immobility_seconds,
             "room": self.room, "zone": self.zone, "camera_id": self.camera_id,
             "confidence": self.confidence, "person": self.person,
             "details": self.details, "detected_at": self.detected_at,
             "priority": self.spec["priority"], "escalations": self.escalations,
-            "acked_by": self.acked_by,
+            "acked_by": self.acked_by, "schema_version": 1,
         }
 
 
 class IncidentManager:
+    MAX_REMEMBERED_EVENT_IDS = 5000
+
     def __init__(self):
         self.lock = threading.RLock()
         self.incidents: dict[str, Incident] = {}
         self.last_hazard: dict[tuple[str, str], float] = {}
         self.heartbeats: dict[str, dict] = {}   # camera_id -> {"t", "room", "offline"}
+        self.seen_event_ids: OrderedDict[str, None] = OrderedDict()
+
+    def _seen_before(self, event_id: str) -> bool:
+        if event_id in self.seen_event_ids:
+            return True
+        self.seen_event_ids[event_id] = None
+        while len(self.seen_event_ids) > self.MAX_REMEMBERED_EVENT_IDS:
+            self.seen_event_ids.popitem(last=False)
+        return False
 
     # ---- intake ----------------------------------------------------------
     def handle_event(self, evt: dict) -> dict:
@@ -376,6 +418,15 @@ class IncidentManager:
             spec["advice"] = list(evt["advice"]) if isinstance(evt["advice"], list) else [evt["advice"]]
 
         with self.lock:
+            # A detector retry with the same event_id is not a new event.
+            sid = evt.get("event_id")
+            if sid and self._seen_before(str(sid)):
+                return {"status": "duplicate", "event_id": sid}
+
+            # No person in frame: not a fall.
+            if etype == "fall" and evt.get("person_detected") is False:
+                return {"status": "ignored", "reason": "no person detected"}
+
             room = evt.get("room") or "Unknown room"
             key = (etype, room)
             if spec["cooldown"]:
@@ -385,11 +436,13 @@ class IncidentManager:
                     return {"status": "suppressed", "reason": "cooldown"}
                 self.last_hazard[key] = time.time()
 
-            # A new fall in a room that already has an active fall incident
-            # is the same emergency, not a new one.
+            # A new fall in a room that already has a RECENT active fall incident
+            # is the same emergency, not a new one. After fall_dedupe_s it is a
+            # new fall, even if nobody ever acknowledged the old one.
             if etype == "fall":
                 for inc in self.incidents.values():
-                    if inc.type == "fall" and inc.room == room and inc.status in ACTIVE:
+                    if (inc.type == "fall" and inc.room == room and inc.status in ACTIVE
+                            and time.monotonic() - inc.created < CFG["fall_dedupe_s"]):
                         return {"status": "duplicate", "incident_id": inc.id}
 
             inc = Incident(evt, spec)
@@ -414,18 +467,39 @@ class IncidentManager:
             return {"status": inc.status, "incident_id": inc.id}
 
     # ---- transitions -----------------------------------------------------
+    def _notify(self, inc: Incident, stage: str, topic: str, title: str, message: str, **kwargs) -> None:
+        """Send on a background thread, then log whether ntfy accepted it."""
+        def run() -> None:
+            try:
+                ok = publish(topic, title, message, **kwargs)
+            except Exception:
+                log.exception("[%s] notify crashed (%s)", inc.id, stage)
+                ok = False
+            record(inc, "delivered" if ok else "delivery_failed", stage=stage)
+        threading.Thread(target=run, daemon=True).start()
+
     def _confirm_timeout(self, inc_id: str) -> None:
         with self.lock:
             inc = self.incidents.get(inc_id)
             if inc and inc.status == "pending_confirmation":
-                self._fire(inc, headline=f"No response from the person within {CFG['confirm_window_s']}s.")
+                try:
+                    self._fire(inc, headline=f"No response from the person within {CFG['confirm_window_s']}s.")
+                except Exception:
+                    log.exception("[%s] could not send the alert", inc.id)
+                    if inc.spec["escalate"] and inc.timer is None:
+                        self._schedule_escalation(inc)
 
     def _fire(self, inc: Incident, headline: str | None = None) -> None:
         inc.status = "alerted"
         record(inc, "alerted")
-        publish_async(CFG["ntfy_topic"], inc.spec["title"], inc.body(headline),
-                      priority=inc.spec["priority"], tags=inc.spec["tags"],
-                      actions=inc.actions(), click=inc.map_link(), attach=inc.snapshot_url)
+        try:
+            message = inc.body(headline)
+        except Exception:
+            log.exception("[%s] could not format the alert, sending a minimal one", inc.id)
+            message = f"{inc.spec['title']} in {inc.room}. Incident {inc.id}"
+        self._notify(inc, "alerted", CFG["ntfy_topic"], inc.spec["title"], message,
+                     priority=inc.spec["priority"], tags=inc.spec["tags"],
+                     actions=inc.actions(), click=inc.map_link(), attach=inc.snapshot_url)
         if inc.spec["escalate"]:
             self._schedule_escalation(inc)
 
@@ -442,21 +516,26 @@ class IncidentManager:
             if inc.escalations >= CFG["max_escalations"]:
                 log.warning("[%s] max escalations reached, still unacknowledged", inc.id)
                 return
-            inc.escalations += 1
-            inc.status = "escalated"
-            record(inc, "escalated")
-            waited = CFG["escalate_after_s"] * inc.escalations
-            waited_txt = f"{waited}s" if waited < 120 else f"{round(waited / 60)} min"
-            headline = f"STILL NO CAREGIVER RESPONSE after {waited_txt} (reminder {inc.escalations})."
-            title = "UNANSWERED: " + inc.spec["title"]
-            publish_async(CFG["ntfy_topic"], title, inc.body(headline), priority=5,
-                          tags=inc.spec["tags"], actions=inc.actions(), click=inc.map_link())
-            if CFG["ntfy_escalation_topic"]:
-                publish_async(CFG["ntfy_escalation_topic"], "BACKUP NEEDED: " + inc.spec["title"],
-                              inc.body("The primary caregiver has not responded. Please help."),
-                              priority=5, tags=inc.spec["tags"], actions=inc.actions(),
-                              click=inc.map_link())
-            self._schedule_escalation(inc)
+            try:
+                inc.escalations += 1
+                inc.status = "escalated"
+                record(inc, "escalated")
+                waited = CFG["escalate_after_s"] * inc.escalations
+                waited_txt = f"{waited:g}s" if waited < 120 else f"{round(waited / 60)} min"
+                headline = f"STILL NO CAREGIVER RESPONSE after {waited_txt} (reminder {inc.escalations})."
+                title = "UNANSWERED: " + inc.spec["title"]
+                self._notify(inc, "escalation", CFG["ntfy_topic"], title, inc.body(headline), priority=5,
+                             tags=inc.spec["tags"], actions=inc.actions(), click=inc.map_link())
+                if CFG["ntfy_escalation_topic"]:
+                    self._notify(inc, "escalation_backup", CFG["ntfy_escalation_topic"],
+                                 "BACKUP NEEDED: " + inc.spec["title"],
+                                 inc.body("The primary caregiver has not responded. Please help."),
+                                 priority=5, tags=inc.spec["tags"], actions=inc.actions(),
+                                 click=inc.map_link())
+            except Exception:
+                log.exception("[%s] escalation failed", inc.id)
+            finally:
+                self._schedule_escalation(inc)  # keep trying; the max check above ends it
 
     def _stop_timer(self, inc: Incident) -> None:
         if inc.timer:
@@ -530,19 +609,25 @@ class IncidentManager:
             self.heartbeats[camera_id] = {"t": time.time(), "room": room or (hb or {}).get("room") or "Unknown room",
                                           "offline": False}
 
+    def _check_cameras(self) -> None:
+        now = time.time()
+        with self.lock:
+            for cam, hb in list(self.heartbeats.items()):
+                silent = now - hb["t"]
+                if not hb["offline"] and silent > CFG["heartbeat_timeout_s"]:
+                    hb["offline"] = True
+                    # Offline alerts aren't muted by the hazard cooldown.
+                    self.last_hazard.pop(("camera_offline", hb["room"]), None)
+                    self.handle_event({"type": "camera_offline", "room": hb["room"], "camera_id": cam,
+                                       "details": f"No data from the detection engine for {int(silent)}s."})
+
     def watchdog_loop(self) -> None:
         while True:
             time.sleep(5)
-            now = time.time()
-            with self.lock:
-                for cam, hb in self.heartbeats.items():
-                    silent = now - hb["t"]
-                    if not hb["offline"] and silent > CFG["heartbeat_timeout_s"]:
-                        hb["offline"] = True
-                        # Offline alerts aren't muted by the hazard cooldown.
-                        self.last_hazard.pop(("camera_offline", hb["room"]), None)
-                        self.handle_event({"type": "camera_offline", "room": hb["room"], "camera_id": cam,
-                                           "details": f"No data from the detection engine for {int(silent)}s."})
+            try:
+                self._check_cameras()
+            except Exception:  # a dead watchdog would hide the next camera failure
+                log.exception("camera watchdog error")
 
     def summary(self) -> list[dict]:
         with self.lock:
@@ -608,12 +693,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _authorized(self) -> bool:
-        if CFG["api_key"] and self.headers.get("X-API-Key") != CFG["api_key"]:
-            self._send(401, {"error": "bad or missing X-API-Key"})
-            return False
+        if CFG["api_key"]:
+            sent = (self.headers.get("X-API-Key") or "").encode()
+            if not secrets.compare_digest(sent, CFG["api_key"].encode()):
+                self._send(401, {"error": "bad or missing X-API-Key"})
+                return False
         return True
 
-    def _json(self) -> dict:
+    def _json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if not n:
             return {}
@@ -622,9 +709,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
         if path in ("/", "/health"):
-            self._send(200, {"ok": True, "ntfy_topic": CFG["ntfy_topic"], "dry_run": CFG["dry_run"],
-                             "cameras": MANAGER.heartbeats})
+            # Deliberately minimal: the ntfy topic name is the secret that protects the alert feed.
+            self._send(200, {"ok": True, "dry_run": CFG["dry_run"]})
         elif path == "/incidents":
+            if not self._authorized():
+                return
             self._send(200, MANAGER.summary())
         else:
             self._send(404, {"error": "not found"})
@@ -637,8 +726,10 @@ class Handler(BaseHTTPRequestHandler):
             body = self._json()
             if path == "/events":
                 events = body if isinstance(body, list) else [body]
-                results = [MANAGER.handle_event(e) for e in events]
+                results = [MANAGER.handle_event(to_internal(e)) for e in events]
                 self._send(200, results if isinstance(body, list) else results[0])
+            elif not isinstance(body, dict):
+                raise ValueError("body must be a JSON object")
             elif path == "/heartbeat":
                 MANAGER.heartbeat(body.get("camera_id", "cam-1"), body.get("room"))
                 self._send(200, {"ok": True})
@@ -670,6 +761,9 @@ def main() -> None:
     CFG = load_config()
     if "--dry-run" in sys.argv:
         CFG["dry_run"] = True
+    if not CFG["api_key"] and CFG["host"] not in ("127.0.0.1", "localhost"):
+        log.warning("api_key is empty and the service listens on %s: anyone on the network can post "
+                    "events or cancel alerts. Set api_key in config.json.", CFG["host"])
 
     threading.Thread(target=ack_listener_loop, daemon=True).start()
     threading.Thread(target=MANAGER.watchdog_loop, daemon=True).start()

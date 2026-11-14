@@ -109,3 +109,7 @@ Thumbs.db
 # SafeStep alert service: local config holds the private ntfy topic / tokens
 alerts/config.json
 alerts/data/
+
+
+analytics/.env
+analytics/.ingest_offset
