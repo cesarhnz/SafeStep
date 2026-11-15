@@ -4,7 +4,7 @@
       "name": "safestep_incidents",
       "displayName": "SafeStep Incidents",
       "config": {
-        "source": "workspace.safestep.incidents",
+        "source": "SELECT i.*, r.review_outcome, r.review_note, r.reviewed_by, r.reviewed_at FROM workspace.safestep.incidents i LEFT JOIN (\n  SELECT review_rows.incident_id, review_rows.review_outcome, review_rows.review_note,\n         review_rows.reviewed_by, review_rows.reviewed_at\n  FROM (\n    SELECT incident_id,\n           outcome AS review_outcome,\n           details AS review_note,\n           actor AS reviewed_by,\n           logged_at AS reviewed_at,\n           ROW_NUMBER() OVER (PARTITION BY incident_id ORDER BY logged_at DESC) AS rn\n    FROM workspace.safestep.lifecycle_events\n    WHERE outcome IS NOT NULL\n  ) review_rows\n  WHERE review_rows.rn = 1\n) r ON i.incident_id = r.incident_id",
         "measures": [
           {
             "name": "incidents",
@@ -61,10 +61,30 @@
           {
             "name": "incidents_missing_timestamp",
             "expr": "COUNT(1) FILTER (WHERE `timestamp` IS NULL)"
+          },
+          {
+            "name": "caregiver_confirmed_falls",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE review_outcome = 'confirmed_fall')",
+            "comment": "Distinct incidents where the caregiver reported the outcome as a confirmed fall. Caregiver-reported observation, not a verified clinical finding."
+          },
+          {
+            "name": "caregiver_no_fall_reports",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE review_outcome = 'no_fall')",
+            "comment": "Distinct incidents where the caregiver reported that no fall occurred."
+          },
+          {
+            "name": "caregiver_unsure_reviews",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE review_outcome = 'unsure')",
+            "comment": "Distinct incidents where the caregiver recorded 'unsure'. Distinct from unreviewed (no review recorded)."
+          },
+          {
+            "name": "awaiting_review_incidents",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved') AND review_outcome IS NULL)",
+            "comment": "Fall or near-fall incidents with status cancelled or resolved that have no recorded caregiver review. A cancellation is not a review outcome and does not mean there was no fall."
           }
         ],
         "version": "1.1",
-        "comment": "Incident-level SafeStep metrics, one row per incident derived from the lifecycle log. Fall events use event_type 'fall' and are detections, not confirmed injuries.",
+        "comment": "Incident-level SafeStep metrics, one row per incident derived from the lifecycle log. Fall events use event_type 'fall' and are detections, not confirmed injuries. Caregiver review fields (review_outcome, review_note, reviewed_by, reviewed_at) come from lifecycle rows that carry a non-null outcome; a null review_outcome means no caregiver review has been recorded (unreviewed), which is distinct from 'unsure'. Review outcomes are caregiver-reported observations, not verified clinical findings.",
         "dimensions": [
           {
             "name": "incident_id",
@@ -105,6 +125,28 @@
           {
             "name": "confidence_band",
             "expr": "CASE WHEN confidence IS NULL THEN 'Not recorded' WHEN `confidence_normalized` < 0.50 THEN 'Low (below 0.50)' WHEN `confidence_normalized` < 0.70 THEN 'Medium (0.50 to 0.69)' WHEN `confidence_normalized` < 0.85 THEN 'High (0.70 to 0.84)' ELSE 'Very high (0.85 and above)' END"
+          },
+          {
+            "name": "review_outcome",
+            "expr": "review_outcome",
+            "comment": "Caregiver-reported review outcome ('confirmed_fall', 'no_fall', 'unsure'); NULL means no caregiver review recorded yet. Caregiver-reported observation, not a verified clinical finding."
+          },
+          {
+            "name": "review_status",
+            "expr": "COALESCE(review_outcome, 'unreviewed')",
+            "comment": "Review outcome with NULL shown as 'unreviewed'; 'unreviewed' is distinct from 'unsure'."
+          },
+          {
+            "name": "review_note",
+            "expr": "review_note"
+          },
+          {
+            "name": "reviewed_by",
+            "expr": "reviewed_by"
+          },
+          {
+            "name": "reviewed_at",
+            "expr": "reviewed_at"
           }
         ]
       }
@@ -2615,33 +2657,16 @@
             "name": "date_range",
             "queries": [
               {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_timestamp",
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_event_time",
                 "query": {
                   "datasetName": "safestep_incidents",
                   "fields": [
                     {
-                      "name": "timestamp",
-                      "expression": "`timestamp`"
+                      "name": "event_time",
+                      "expression": "`event_time`"
                     },
                     {
-                      "name": "timestamp_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              },
-              {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_detected_at",
-                "query": {
-                  "datasetName": "safestep_lifecycle",
-                  "fields": [
-                    {
-                      "name": "detected_at",
-                      "expression": "`detected_at`"
-                    },
-                    {
-                      "name": "detected_at_associativity",
+                      "name": "event_time_associativity",
                       "expression": "COUNT_IF(`associative_filter_predicate_group`)"
                     }
                   ],
@@ -2653,18 +2678,17 @@
               "version": 2,
               "frame": {
                 "showTitle": true,
-                "title": "Date range"
+                "title": {
+                  "value": "Date range",
+                  "fields": []
+                }
               },
               "widgetType": "filter-date-range-picker",
               "encodings": {
                 "fields": [
                   {
-                    "fieldName": "timestamp",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_timestamp"
-                  },
-                  {
-                    "fieldName": "detected_at",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_detected_at"
+                    "fieldName": "event_time",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_event_time"
                   }
                 ]
               }
@@ -2672,140 +2696,6 @@
           },
           "position": {
             "x": 0,
-            "y": 0,
-            "width": 3,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "room",
-            "queries": [
-              {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room",
-                "query": {
-                  "datasetName": "safestep_incidents",
-                  "fields": [
-                    {
-                      "name": "room",
-                      "expression": "`room`"
-                    },
-                    {
-                      "name": "room_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              },
-              {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_room",
-                "query": {
-                  "datasetName": "safestep_lifecycle",
-                  "fields": [
-                    {
-                      "name": "room",
-                      "expression": "`room`"
-                    },
-                    {
-                      "name": "room_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "frame": {
-                "showTitle": true,
-                "title": "Room"
-              },
-              "widgetType": "filter-multi-select",
-              "encodings": {
-                "fields": [
-                  {
-                    "fieldName": "room",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room"
-                  },
-                  {
-                    "fieldName": "room",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_room"
-                  }
-                ]
-              }
-            }
-          },
-          "position": {
-            "x": 3,
-            "y": 0,
-            "width": 3,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "device",
-            "queries": [
-              {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_device_id",
-                "query": {
-                  "datasetName": "safestep_incidents",
-                  "fields": [
-                    {
-                      "name": "device_id",
-                      "expression": "`device_id`"
-                    },
-                    {
-                      "name": "device_id_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              },
-              {
-                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_device_id",
-                "query": {
-                  "datasetName": "safestep_lifecycle",
-                  "fields": [
-                    {
-                      "name": "device_id",
-                      "expression": "`device_id`"
-                    },
-                    {
-                      "name": "device_id_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "frame": {
-                "showTitle": true,
-                "title": "Device"
-              },
-              "widgetType": "filter-multi-select",
-              "encodings": {
-                "fields": [
-                  {
-                    "fieldName": "device_id",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_device_id"
-                  },
-                  {
-                    "fieldName": "device_id",
-                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_device_id"
-                  }
-                ]
-              }
-            }
-          },
-          "position": {
-            "x": 6,
             "y": 0,
             "width": 3,
             "height": 2
@@ -2880,6 +2770,361 @@
         }
       ],
       "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "caregiver_reviews",
+      "displayName": "Caregiver Reviews",
+      "layout": [
+        {
+          "widget": {
+            "name": "reviews_note",
+            "spec": {
+              "widgetType": "text",
+              "version": 1,
+              "encodings": {
+                "text": {
+                  "lines": [
+                    "How to read this page: review outcomes are **caregiver-reported observations**, not verified clinical findings. **Unreviewed** means no caregiver review has been recorded yet — it is distinct from **unsure**, which is an explicit caregiver answer. A **cancelled alert is a cancellation only**, kept separate from review outcomes; a cancellation alone does not mean there was no fall. Counters count distinct incidents. Date and event-type filters in the global filter bar also apply to this page; empty tiles mean no matching events in the current filters and date range."
+                  ],
+                  "fields": []
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "confirmed_falls_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(caregiver_confirmed_falls)",
+                      "expression": "MEASURE(`caregiver_confirmed_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Caregiver-confirmed falls (caregiver-reported)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(caregiver_confirmed_falls)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "no_fall_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(caregiver_no_fall_reports)",
+                      "expression": "MEASURE(`caregiver_no_fall_reports`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Caregiver reported no fall"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(caregiver_no_fall_reports)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "unsure_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(caregiver_unsure_reviews)",
+                      "expression": "MEASURE(`caregiver_unsure_reviews`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Caregiver unsure (explicit answer, not unreviewed)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(caregiver_unsure_reviews)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "awaiting_review_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(awaiting_review_incidents)",
+                      "expression": "MEASURE(`awaiting_review_incidents`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Awaiting caregiver review (fall or near-fall, cancelled or resolved)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(awaiting_review_incidents)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 3,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "room_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "room_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Room"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "room",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "recent_reviewed_incidents",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "incident_id",
+                      "expression": "`incident_id`"
+                    },
+                    {
+                      "name": "event_time",
+                      "expression": "`event_time`"
+                    },
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "review_status",
+                      "expression": "`review_status`"
+                    },
+                    {
+                      "name": "review_note",
+                      "expression": "`review_note`"
+                    },
+                    {
+                      "name": "reviewed_by",
+                      "expression": "`reviewed_by`"
+                    },
+                    {
+                      "name": "reviewed_at",
+                      "expression": "`reviewed_at`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`event_type` IN ('fall', 'near_fall')"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Recent fall and near-fall incidents with caregiver review (caregiver-reported observations)"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "incident_id"
+                  },
+                  {
+                    "fieldName": "event_time"
+                  },
+                  {
+                    "fieldName": "event_type"
+                  },
+                  {
+                    "fieldName": "room"
+                  },
+                  {
+                    "fieldName": "status"
+                  },
+                  {
+                    "fieldName": "review_status",
+                    "displayName": "Review outcome (unreviewed if blank)"
+                  },
+                  {
+                    "fieldName": "review_note"
+                  },
+                  {
+                    "fieldName": "reviewed_by"
+                  },
+                  {
+                    "fieldName": "reviewed_at"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
       "layoutVersion": "GRID_V1"
     }
   ],

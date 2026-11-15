@@ -66,3 +66,31 @@ The **I'm on my way** button posts `ack <ID>` to `<topic>-ack` on ntfy, and the 
 ## Notes
 - Anyone who knows an ntfy.sh topic name can read it. Keep the random name or self-host ntfy with a token.
 - This is a research prototype, not a certified emergency system.
+
+## Caregiver event review
+
+After helping, post `resolve <ID>` to the caregiver ack topic. Resolving or cancelling a fall or near-fall sends a separate low-priority notification with **Confirmed fall / No fall / Unsure** buttons. Cancellation alone never sets a review outcome. Acknowledging means someone is responding; resolve the incident before reviewing it.
+
+For an optional note or a correction, publish a message to the same ack topic:
+
+```text
+review ABC123 confirmed_fall Witnessed a fall near the bed
+review ABC123 no_fall Sat down deliberately
+review ABC123 unsure Could not verify what happened
+```
+
+Or use the authenticated API:
+
+```text
+POST /incidents/ABC123/review
+X-API-Key: <configured api_key>
+Content-Type: application/json
+
+{"outcome":"confirmed_fall","note":"Witnessed a fall near the bed","by":"Sam"}
+```
+
+Outcomes are `confirmed_fall`, `no_fall`, or `unsure`. Notes are optional and limited to 2,000 characters; `by` is a non-empty label of at most 200 characters. API reviews inherit the existing API-key configuration. ntfy commands use the shared caregiver topic and record `Caregiver (ntfy)` as the actor, not a verified individual identity. The Python client also exposes `ss.review(incident_id, outcome, note=None, by="caregiver")`.
+
+Only cancelled or resolved fall/near-fall incidents accept reviews. Reviewing never cancels timers or changes incident status. Corrections append `reviewed` lifecycle rows; identical outcome/note/actor submissions are idempotent. The service sends a save receipt to the primary topic. Retain `data/events.jsonl`: closed incidents can be recovered from this log for review after restart. Active incident/timer recovery remains outside this review feature.
+
+Run local review tests with `python3 -m unittest discover -s alerts/tests -v` from the repository root.

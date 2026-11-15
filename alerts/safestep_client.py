@@ -69,6 +69,12 @@ class SafeStepClient:
     def cancel(self, incident_id: str, by: str = "person") -> None:
         self._post(f"/incidents/{incident_id}/cancel", {"by": by})
 
+    def review(self, incident_id: str, outcome: str, note: str | None = None,
+               by: str = "caregiver") -> dict | None:
+        """Review a cancelled/resolved fall: confirmed_fall, no_fall, or unsure."""
+        return self._post(f"/incidents/{incident_id}/review",
+                          {"outcome": outcome, "note": note, "by": by})
+
     # ---- potential dangers (fire and forget) ------------------------------
     def hazard(self, type: str, **fields) -> threading.Thread:
         """type: near_fall, obstacle, low_light, night_wandering, inactivity,
