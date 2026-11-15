@@ -57,4 +57,22 @@ for result in monitor(source=0, privacy=True):
 
 `monitor()` yields original and annotated frames, tracked people, events, fallen IDs, source-relative timestamp and measured FPS. It does not itself send alerts; the CLI wires event serialization and the HTTP worker together. `events.py` converts detector `FallEvent` objects into the agreed HTTP schema.
 
+## NCNN model on Arduino Uno Q
+
+SafeStep accepts Ultralytics-exported model directories through `--model`. To export the pose checkpoint at 320 × 320 in NCNN format, run this from the repository root (Ultralytics may install its export dependencies on the first run):
+
+```sh
+uv run yolo export model=yolo26n-pose.pt format=ncnn imgsz=320
+```
+
+Ultralytics creates `yolo26n-pose_ncnn_model/`. Use that directory for inference and pass the matching input size explicitly:
+
+```sh
+uv run safestep --model yolo26n-pose_ncnn_model --imgsz 320 \
+  --source /dev/video2 --no-show --diagnostics --width 640 --height 360 \
+  --device-id uno_q_01 --room "Living room"
+```
+
+The NCNN export keeps the same pose task and can run on the CPU; export support alone does not guarantee faster inference on the Uno Q, so compare the reported FPS and skeleton stability with the PyTorch model. See the [Ultralytics NCNN export guide](https://docs.ultralytics.com/integrations/ncnn/) for export options.
+
 Synthetic-pose and local HTTP integration tests live in `../tests/`. Real camera accuracy, occlusion behavior and inference performance require representative recordings or hardware checks.
