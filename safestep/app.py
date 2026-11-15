@@ -47,18 +47,28 @@ class FrameResult:
 
 
 def open_source(source: str | int, width: int | None = None, height: int | None = None) -> cv2.VideoCapture:
+    source_path = Path(str(source))
+    is_device_path = (
+        source_path.parent == Path("/dev")
+        and source_path.name.startswith("video")
+        and source_path.name[5:].isdigit()
+    )
     if isinstance(source, int) or str(source).isdigit():
         backend = cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY
         cap = cv2.VideoCapture(int(source), backend)
-        # MJPG gives much higher frame rates than raw YUYV on most USB webcams
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        if width and height:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    elif is_device_path:
+        backend = cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY
+        cap = cv2.VideoCapture(str(source_path), backend)
     else:
         if not Path(source).exists():
             raise FileNotFoundError(source)
         cap = cv2.VideoCapture(str(source))
+    if isinstance(source, int) or str(source).isdigit() or is_device_path:
+        # MJPG gives higher frame rates than raw YUYV on most USB webcams.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        if width and height:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video source {source!r}")
     return cap
