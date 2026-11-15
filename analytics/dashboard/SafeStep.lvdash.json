@@ -1,0 +1,2892 @@
+{
+  "datasets": [
+    {
+      "name": "safestep_incidents",
+      "displayName": "SafeStep Incidents",
+      "config": {
+        "source": "workspace.safestep.incidents",
+        "measures": [
+          {
+            "name": "incidents",
+            "expr": "COUNT(DISTINCT incident_id)"
+          },
+          {
+            "name": "possible_falls",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall')"
+          },
+          {
+            "name": "possible_falls_alerted",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall' AND alert_sent = true)"
+          },
+          {
+            "name": "pct_falls_with_alert_accepted",
+            "expr": "100.0 * MEASURE(`possible_falls_alerted`) / MEASURE(`possible_falls`)"
+          },
+          {
+            "name": "median_alert_to_ack_seconds",
+            "expr": "MEDIAN(CASE WHEN acknowledged_at IS NOT NULL AND alerted_at IS NOT NULL THEN (unix_timestamp(acknowledged_at) - unix_timestamp(alerted_at)) END)"
+          },
+          {
+            "name": "acknowledged_incidents",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE acknowledged_at IS NOT NULL)"
+          },
+          {
+            "name": "unacknowledged_incidents",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE acknowledged_at IS NULL AND alerted_at IS NOT NULL)"
+          },
+          {
+            "name": "escalated_incidents",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE escalations > 0)"
+          },
+          {
+            "name": "total_escalations",
+            "expr": "SUM(escalations)"
+          },
+          {
+            "name": "delivery_failed_incidents",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE delivery_failed = true)"
+          },
+          {
+            "name": "incidents_missing_confidence",
+            "expr": "COUNT(1) FILTER (WHERE confidence IS NULL)"
+          },
+          {
+            "name": "incidents_missing_room",
+            "expr": "COUNT(1) FILTER (WHERE room IS NULL OR room = '')"
+          },
+          {
+            "name": "incidents_missing_device",
+            "expr": "COUNT(1) FILTER (WHERE device_id IS NULL OR device_id = '')"
+          },
+          {
+            "name": "incidents_missing_timestamp",
+            "expr": "COUNT(1) FILTER (WHERE `timestamp` IS NULL)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Incident-level SafeStep metrics, one row per incident derived from the lifecycle log. Fall events use event_type 'fall' and are detections, not confirmed injuries.",
+        "dimensions": [
+          {
+            "name": "incident_id",
+            "expr": "incident_id"
+          },
+          {
+            "name": "room",
+            "expr": "room"
+          },
+          {
+            "name": "device_id",
+            "expr": "device_id"
+          },
+          {
+            "name": "event_type",
+            "expr": "event_type"
+          },
+          {
+            "name": "status",
+            "expr": "status"
+          },
+          {
+            "name": "event_time",
+            "expr": "`timestamp`"
+          },
+          {
+            "name": "incident_day",
+            "expr": "DATE_TRUNC('DAY', alerted_at)"
+          },
+          {
+            "name": "hour_of_day",
+            "expr": "HOUR(alerted_at)"
+          },
+          {
+            "name": "confidence_normalized",
+            "expr": "CASE WHEN confidence > 1 THEN confidence / 100.0 ELSE confidence END"
+          },
+          {
+            "name": "confidence_band",
+            "expr": "CASE WHEN confidence IS NULL THEN 'Not recorded' WHEN `confidence_normalized` < 0.50 THEN 'Low (below 0.50)' WHEN `confidence_normalized` < 0.70 THEN 'Medium (0.50 to 0.69)' WHEN `confidence_normalized` < 0.85 THEN 'High (0.70 to 0.84)' ELSE 'Very high (0.85 and above)' END"
+          }
+        ]
+      }
+    },
+    {
+      "name": "safestep_data_quality",
+      "displayName": "SafeStep Data Quality",
+      "config": {
+        "source": "SELECT 'incidents' AS source_name, 'confidence' AS field_name, COUNT(1) AS total_rows,\n       COUNT(1) FILTER (WHERE confidence IS NULL) AS missing_rows\nFROM workspace.safestep.incidents UNION ALL SELECT 'incidents', 'room', COUNT(1), COUNT(1) FILTER (WHERE room IS NULL OR room = '') FROM workspace.safestep.incidents UNION ALL SELECT 'incidents', 'device_id', COUNT(1), COUNT(1) FILTER (WHERE device_id IS NULL OR device_id = '') FROM workspace.safestep.incidents UNION ALL SELECT 'incidents', 'timestamp', COUNT(1), COUNT(1) FILTER (WHERE `timestamp` IS NULL) FROM workspace.safestep.incidents UNION ALL SELECT 'lifecycle_events', 'confidence', COUNT(1), COUNT(1) FILTER (WHERE confidence IS NULL) FROM workspace.safestep.lifecycle_events UNION ALL SELECT 'lifecycle_events', 'room', COUNT(1), COUNT(1) FILTER (WHERE room IS NULL OR room = '') FROM workspace.safestep.lifecycle_events UNION ALL SELECT 'lifecycle_events', 'device_id', COUNT(1), COUNT(1) FILTER (WHERE device_id IS NULL OR device_id = '') FROM workspace.safestep.lifecycle_events UNION ALL SELECT 'lifecycle_events', 'detected_at', COUNT(1), COUNT(1) FILTER (WHERE detected_at IS NULL) FROM workspace.safestep.lifecycle_events",
+        "measures": [
+          {
+            "name": "total_rows",
+            "expr": "SUM(total_rows)"
+          },
+          {
+            "name": "missing_rows",
+            "expr": "SUM(missing_rows)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Field-level completeness profile of the SafeStep incident and lifecycle sources",
+        "dimensions": [
+          {
+            "name": "source_name",
+            "expr": "source_name"
+          },
+          {
+            "name": "field_name",
+            "expr": "field_name"
+          }
+        ]
+      }
+    },
+    {
+      "name": "safestep_lifecycle",
+      "displayName": "SafeStep Lifecycle Events",
+      "config": {
+        "source": "SELECT *,\n       MIN(CASE WHEN lifecycle IN ('alerted', 'delivered') THEN logged_at END)\n         OVER (PARTITION BY incident_id) AS incident_alert_at\nFROM workspace.safestep.lifecycle_events",
+        "measures": [
+          {
+            "name": "events",
+            "expr": "COUNT(1)"
+          },
+          {
+            "name": "source_events",
+            "expr": "COUNT(DISTINCT incident_id)"
+          },
+          {
+            "name": "fall_events",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall')"
+          },
+          {
+            "name": "prevention_events",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('near_fall', 'obstacle', 'low_light', 'night_wandering', 'inactivity'))"
+          },
+          {
+            "name": "delivery_events",
+            "expr": "COUNT(1) FILTER (WHERE lifecycle IN ('alerted', 'delivered', 'delivery_failed'))"
+          },
+          {
+            "name": "camera_offline_events",
+            "expr": "COUNT(1) FILTER (WHERE event_type = 'camera_offline' OR lifecycle = 'camera_offline')"
+          },
+          {
+            "name": "camera_offline_episodes",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'camera_offline' OR lifecycle = 'camera_offline')"
+          },
+          {
+            "name": "alert_attempts",
+            "expr": "COUNT(1) FILTER (WHERE lifecycle = 'alerted')"
+          },
+          {
+            "name": "ntfy_accepted_messages",
+            "expr": "COUNT(1) FILTER (WHERE lifecycle = 'delivered')"
+          },
+          {
+            "name": "delivery_failure_events",
+            "expr": "COUNT(1) FILTER (WHERE lifecycle = 'delivery_failed')"
+          },
+          {
+            "name": "latest_event_time",
+            "expr": "MAX(logged_at)"
+          },
+          {
+            "name": "events_missing_confidence",
+            "expr": "COUNT(1) FILTER (WHERE confidence IS NULL)"
+          },
+          {
+            "name": "events_missing_room",
+            "expr": "COUNT(1) FILTER (WHERE room IS NULL OR room = '')"
+          },
+          {
+            "name": "events_missing_device",
+            "expr": "COUNT(1) FILTER (WHERE device_id IS NULL OR device_id = '')"
+          },
+          {
+            "name": "events_missing_detected_at",
+            "expr": "COUNT(1) FILTER (WHERE detected_at IS NULL)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Row-level SafeStep lifecycle events including alert delivery, escalation, and device or camera events",
+        "dimensions": [
+          {
+            "name": "lifecycle",
+            "expr": "lifecycle"
+          },
+          {
+            "name": "event_type",
+            "expr": "event_type"
+          },
+          {
+            "name": "status",
+            "expr": "status"
+          },
+          {
+            "name": "room",
+            "expr": "room"
+          },
+          {
+            "name": "zone",
+            "expr": "zone"
+          },
+          {
+            "name": "device_id",
+            "expr": "device_id"
+          },
+          {
+            "name": "camera_id",
+            "expr": "camera_id"
+          },
+          {
+            "name": "actor",
+            "expr": "actor"
+          },
+          {
+            "name": "logged_time",
+            "expr": "logged_at"
+          },
+          {
+            "name": "event_day",
+            "expr": "DATE_TRUNC('DAY', COALESCE(incident_alert_at, detected_at))"
+          },
+          {
+            "name": "hour_of_day",
+            "expr": "HOUR(COALESCE(incident_alert_at, detected_at))"
+          },
+          {
+            "name": "delivery_stage",
+            "expr": "CASE WHEN lifecycle = 'alerted' THEN 'Alert attempted by service' WHEN lifecycle = 'delivered' THEN 'Accepted by ntfy' WHEN lifecycle = 'delivery_failed' THEN 'Delivery failed' ELSE lifecycle END"
+          },
+          {
+            "name": "source_event_id",
+            "expr": "source_event_id"
+          },
+          {
+            "name": "incident_ref",
+            "expr": "incident_id"
+          }
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "name": "678dfe88",
+      "displayName": "Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "falls_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls (selected date range)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(possible_falls)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "alert_accepted_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(pct_falls_with_alert_accepted)",
+                      "expression": "MEASURE(`pct_falls_with_alert_accepted`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Falls with an ntfy-accepted alert (%)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(pct_falls_with_alert_accepted)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "median_ack_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(median_alert_to_ack_seconds)",
+                      "expression": "MEASURE(`median_alert_to_ack_seconds`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Median alert-to-acknowledgement (seconds)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(median_alert_to_ack_seconds)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "escalated_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(escalated_incidents)",
+                      "expression": "MEASURE(`escalated_incidents`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Incidents that escalated"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(escalated_incidents)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "camera_offline_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "measure(camera_offline_episodes)",
+                      "expression": "MEASURE(`camera_offline_episodes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Camera-offline episodes"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(camera_offline_episodes)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls by status"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "status",
+                  "displayName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(possible_falls)",
+                  "displayName": "possible_falls",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "displayName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 9,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "recent_incidents",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "incident_id",
+                      "expression": "`incident_id`"
+                    },
+                    {
+                      "name": "event_time",
+                      "expression": "`event_time`"
+                    },
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Recent incidents"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "incident_id"
+                  },
+                  {
+                    "fieldName": "event_time"
+                  },
+                  {
+                    "fieldName": "event_type"
+                  },
+                  {
+                    "fieldName": "room"
+                  },
+                  {
+                    "fieldName": "status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "reading_note",
+            "spec": {
+              "widgetType": "text",
+              "version": 1,
+              "encodings": {
+                "text": {
+                  "lines": [
+                    "How to read this dashboard: **possible falls are detections, not confirmed injuries**. A cancelled alert is a cancellation, not proof of a false alarm. Confidence is a detection score, not a probability of injury. Nothing here shows that the system prevented a fall. Empty tiles mean no matching events in the current filters and date range."
+                  ],
+                  "fields": []
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "fall_patterns",
+      "displayName": "Fall Patterns",
+      "layout": [
+        {
+          "widget": {
+            "name": "falls_disclaimer",
+            "spec": {
+              "widgetType": "text",
+              "version": 1,
+              "encodings": {
+                "text": {
+                  "lines": [
+                    "All charts on this page show **detected possible falls** — events the SafeStep system flagged as possible falls. They are **not confirmed injuries**, and nothing here confirms that an injury occurred. Detection confidence is the model's score for the detection itself; it is **not a probability of injury** and not a medical risk measure. A cancelled alert means the alert was cancelled — it is **not proof that the detection was a false alarm**.\n",
+                    "\n",
+                    "Time-based charts on this page use **alert time** (when the alert was sent), not detection time. Possible falls that never produced an alert are excluded from those alert-time charts rather than silently shown at another time."
+                  ],
+                  "fields": []
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_day",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "incident_day",
+                      "expression": "`incident_day`"
+                    },
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls by day (by alert time)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "incident_day",
+                  "displayName": "incident_day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(possible_falls)",
+                  "displayName": "possible_falls",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_hour",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "hour_of_day",
+                      "expression": "`hour_of_day`"
+                    },
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls by hour of day (by alert time)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "hour_of_day",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(possible_falls)",
+                  "displayName": "possible_falls",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "hour_of_day",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_room",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls by room"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(possible_falls)",
+                  "displayName": "possible_falls",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_confidence",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "confidence_band",
+                      "expression": "`confidence_band`"
+                    },
+                    {
+                      "name": "measure(possible_falls)",
+                      "expression": "MEASURE(`possible_falls`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected possible falls by confidence band (detection score, not injury probability)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "confidence_band",
+                  "displayName": "confidence_band",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(possible_falls)",
+                  "displayName": "possible_falls",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "confidence_band",
+                  "displayName": "confidence_band",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "falls_by_zone",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "zone",
+                      "expression": "`zone`"
+                    },
+                    {
+                      "name": "measure(fall_events)",
+                      "expression": "MEASURE(`fall_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected fall events by location (zone, from lifecycle log)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "zone",
+                  "displayName": "zone",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(fall_events)",
+                  "displayName": "fall_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "zone",
+                  "displayName": "zone",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "alert_response",
+      "displayName": "Alert Response",
+      "layout": [
+        {
+          "widget": {
+            "name": "ack_by_room",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(median_alert_to_ack_seconds)",
+                      "expression": "MEASURE(`median_alert_to_ack_seconds`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Median time from alert to caregiver acknowledgement by room (seconds)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(median_alert_to_ack_seconds)",
+                  "displayName": "median_alert_to_ack_seconds",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "ack_over_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "incident_day",
+                      "expression": "`incident_day`"
+                    },
+                    {
+                      "name": "measure(median_alert_to_ack_seconds)",
+                      "expression": "MEASURE(`median_alert_to_ack_seconds`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Median alert-to-acknowledgement by day (seconds, by alert time)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "incident_day",
+                  "displayName": "incident_day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(median_alert_to_ack_seconds)",
+                  "displayName": "median_alert_to_ack_seconds",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "unacked_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(unacknowledged_incidents)",
+                      "expression": "MEASURE(`unacknowledged_incidents`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Alerted incidents with no acknowledgement"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(unacknowledged_incidents)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "escalated_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(escalated_incidents)",
+                      "expression": "MEASURE(`escalated_incidents`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Incidents that escalated"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(escalated_incidents)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "escalations_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "measure(total_escalations)",
+                      "expression": "MEASURE(`total_escalations`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total escalation events"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(total_escalations)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "delivery_outcomes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "delivery_stage",
+                      "expression": "`delivery_stage`"
+                    },
+                    {
+                      "name": "measure(delivery_events)",
+                      "expression": "MEASURE(`delivery_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Alert delivery outcomes: service attempts vs ntfy acceptance (lifecycle events)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "delivery_stage",
+                  "displayName": "delivery_stage",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(delivery_events)",
+                  "displayName": "delivery_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "delivery_stage",
+                  "displayName": "delivery_stage",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "escalations_by_room",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(total_escalations)",
+                      "expression": "MEASURE(`total_escalations`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Escalations by room"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(total_escalations)",
+                  "displayName": "total_escalations",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "recent_lifecycle",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "logged_time",
+                      "expression": "`logged_time`"
+                    },
+                    {
+                      "name": "incident_id",
+                      "expression": "`incident_id`"
+                    },
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "lifecycle",
+                      "expression": "`lifecycle`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "zone",
+                      "expression": "`zone`"
+                    },
+                    {
+                      "name": "actor",
+                      "expression": "`actor`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Recent alert lifecycle events"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "logged_time"
+                  },
+                  {
+                    "fieldName": "incident_id"
+                  },
+                  {
+                    "fieldName": "event_type"
+                  },
+                  {
+                    "fieldName": "lifecycle"
+                  },
+                  {
+                    "fieldName": "status"
+                  },
+                  {
+                    "fieldName": "room"
+                  },
+                  {
+                    "fieldName": "zone"
+                  },
+                  {
+                    "fieldName": "actor"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "alerts_by_type",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "measure(alert_attempts)",
+                      "expression": "MEASURE(`alert_attempts`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Alert attempts by event type (lifecycle events)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(alert_attempts)",
+                  "displayName": "alert_attempts",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "ntfy_by_type",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "measure(ntfy_accepted_messages)",
+                      "expression": "MEASURE(`ntfy_accepted_messages`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Alert messages accepted by ntfy by event type (lifecycle events)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(ntfy_accepted_messages)",
+                  "displayName": "ntfy_accepted_messages",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 15,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "delivery_outcomes_by_type",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "delivery_stage",
+                      "expression": "`delivery_stage`"
+                    },
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "measure(delivery_events)",
+                      "expression": "MEASURE(`delivery_events`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "delivery_stage"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "event_type"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`delivery_stage`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`event_type`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Alert delivery outcomes by event type (lifecycle events)"
+              },
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "delivery_stage"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "event_type"
+                  }
+                ],
+                "cell": {
+                  "type": "single-cell",
+                  "fieldName": "measure(delivery_events)",
+                  "cellType": "text"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "prevention_signals",
+      "displayName": "Prevention Signals",
+      "layout": [
+        {
+          "widget": {
+            "name": "prevention_note",
+            "spec": {
+              "widgetType": "text",
+              "version": 1,
+              "encodings": {
+                "text": {
+                  "lines": [
+                    "**Prevention signals are not fall incidents.** This page shows near-falls and other hazard events — obstacles, low light, night wandering, and inactivity where present in the data — separately from detected possible falls, so they are never counted toward fall totals. These are detected warning signs about the environment or behaviour. Nothing on this dashboard shows that any fall was prevented.\n",
+                    "\n",
+                    "Time charts on this page use **alert time** where the event produced an alert; events with no alert keep their **detection time** so they stay visible rather than disappearing from the charts."
+                  ],
+                  "fields": []
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "events_by_type",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "measure(source_events)",
+                      "expression": "MEASURE(`source_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Detected events by type: falls shown separately from prevention and hazard events"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(source_events)",
+                  "displayName": "source_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "prevention_by_zone",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "zone",
+                      "expression": "`zone`"
+                    },
+                    {
+                      "name": "measure(prevention_events)",
+                      "expression": "MEASURE(`prevention_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Prevention and hazard events by location (zone)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "zone",
+                  "displayName": "zone",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(prevention_events)",
+                  "displayName": "prevention_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "zone",
+                  "displayName": "zone",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "prevention_over_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "event_day",
+                      "expression": "`event_day`"
+                    },
+                    {
+                      "name": "measure(prevention_events)",
+                      "expression": "MEASURE(`prevention_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Prevention and hazard events by day (by alert time)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_day",
+                  "displayName": "event_day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(prevention_events)",
+                  "displayName": "prevention_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "prevention_by_hour",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "hour_of_day",
+                      "expression": "`hour_of_day`"
+                    },
+                    {
+                      "name": "measure(prevention_events)",
+                      "expression": "MEASURE(`prevention_events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Prevention and hazard events by hour of day (by alert time)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "hour_of_day",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(prevention_events)",
+                  "displayName": "prevention_events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "hour_of_day",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 7,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "prevention_by_room",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "measure(prevention_events)",
+                      "expression": "MEASURE(`prevention_events`)"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Prevention and hazard events by room"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(prevention_events)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "prevention_events"
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "data_quality",
+      "displayName": "Data Quality & Coverage",
+      "layout": [
+        {
+          "widget": {
+            "name": "latest_event_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "measure(latest_event_time)",
+                      "expression": "MEASURE(`latest_event_time`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Latest event received (logged time)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(latest_event_time)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "recency_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "camera_id",
+                      "expression": "`camera_id`"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(latest_event_time)",
+                      "expression": "MEASURE(`latest_event_time`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Most recent event by camera (device) and room"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "camera_id"
+                  },
+                  {
+                    "fieldName": "room"
+                  },
+                  {
+                    "fieldName": "measure(latest_event_time)"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 8,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "missing_fields",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_data_quality",
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "field_name",
+                      "expression": "`field_name`"
+                    },
+                    {
+                      "name": "measure(missing_rows)",
+                      "expression": "MEASURE(`missing_rows`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Missing or null field values (incidents and lifecycle events)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "field_name",
+                  "displayName": "field_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(missing_rows)",
+                  "displayName": "missing_rows",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "events_by_camera_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "camera_id",
+                      "expression": "`camera_id`"
+                    },
+                    {
+                      "name": "event_day",
+                      "expression": "`event_day`"
+                    },
+                    {
+                      "name": "measure(events)",
+                      "expression": "MEASURE(`events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Events over time by camera (device) (by alert time)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_day",
+                  "displayName": "event_day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(events)",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "camera_id",
+                  "displayName": "camera_id",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "events_by_room_camera",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "camera_id",
+                      "expression": "`camera_id`"
+                    },
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(events)",
+                      "expression": "MEASURE(`events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Events by room and camera (device)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(events)",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "camera_id",
+                  "displayName": "camera_id",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "camera_offline_by_camera",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "camera_id",
+                      "expression": "`camera_id`"
+                    },
+                    {
+                      "name": "measure(camera_offline_episodes)",
+                      "expression": "MEASURE(`camera_offline_episodes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Camera-offline episodes by camera (device) and room"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "camera_id",
+                  "displayName": "camera_id",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(camera_offline_episodes)",
+                  "displayName": "camera_offline_episodes",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "camera_offline_by_room",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "measure(camera_offline_episodes)",
+                      "expression": "MEASURE(`camera_offline_episodes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Camera-offline episodes by room"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(camera_offline_episodes)",
+                  "displayName": "camera_offline_episodes",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "room",
+                  "displayName": "room",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "events_by_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "measure(events)",
+                      "expression": "MEASURE(`events`)"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Lifecycle events by status"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(events)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "events"
+                },
+                "color": {
+                  "fieldName": "status",
+                  "displayName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "events_by_lifecycle",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "lifecycle",
+                      "expression": "`lifecycle`"
+                    },
+                    {
+                      "name": "measure(events)",
+                      "expression": "MEASURE(`events`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Lifecycle events by lifecycle stage"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "lifecycle",
+                  "displayName": "lifecycle",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(events)",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "lifecycle",
+                  "displayName": "lifecycle",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 16,
+            "width": 6,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "date_range",
+            "queries": [
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_timestamp",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "timestamp",
+                      "expression": "`timestamp`"
+                    },
+                    {
+                      "name": "timestamp_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_detected_at",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "detected_at",
+                      "expression": "`detected_at`"
+                    },
+                    {
+                      "name": "detected_at_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Date range"
+              },
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "timestamp",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_timestamp"
+                  },
+                  {
+                    "fieldName": "detected_at",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_detected_at"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "room",
+            "queries": [
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "room_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_room",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "room",
+                      "expression": "`room`"
+                    },
+                    {
+                      "name": "room_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Room"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "room",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_room"
+                  },
+                  {
+                    "fieldName": "room",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_room"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "device",
+            "queries": [
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_device_id",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "device_id",
+                      "expression": "`device_id`"
+                    },
+                    {
+                      "name": "device_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_device_id",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "device_id",
+                      "expression": "`device_id`"
+                    },
+                    {
+                      "name": "device_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Device"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "device_id",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_device_id"
+                  },
+                  {
+                    "fieldName": "device_id",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_device_id"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "event_type",
+            "queries": [
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_event_type",
+                "query": {
+                  "datasetName": "safestep_incidents",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "event_type_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_event_type",
+                "query": {
+                  "datasetName": "safestep_lifecycle",
+                  "fields": [
+                    {
+                      "name": "event_type",
+                      "expression": "`event_type`"
+                    },
+                    {
+                      "name": "event_type_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Event type"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "event_type",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ec96198cad4a108cc0f914dd_event_type"
+                  },
+                  {
+                    "fieldName": "event_type",
+                    "queryName": "dashboards/01f1e082c5f510fd8a7f935010b94a98/datasets/01f1e083ece016db99f46bb2194179b6_event_type"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
