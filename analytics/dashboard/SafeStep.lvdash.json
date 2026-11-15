@@ -11,16 +11,16 @@
             "expr": "COUNT(DISTINCT incident_id)"
           },
           {
-            "name": "possible_falls",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall')"
+            "name": "fall_detections",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall_detected')"
           },
           {
-            "name": "possible_falls_alerted",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall' AND alert_sent = true)"
+            "name": "fall_detections_alerted",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall_detected' AND alert_sent = true)"
           },
           {
             "name": "pct_falls_with_alert_accepted",
-            "expr": "100.0 * MEASURE(`possible_falls_alerted`) / MEASURE(`possible_falls`)"
+            "expr": "100.0 * MEASURE(`fall_detections_alerted`) / MEASURE(`fall_detections`)"
           },
           {
             "name": "median_alert_to_ack_seconds",
@@ -79,7 +79,7 @@
           },
           {
             "name": "awaiting_review_incidents",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved', 'recovered') AND review_outcome IS NULL)",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall_detected', 'near_fall') AND status IN ('cancelled', 'resolved') AND review_outcome IS NULL)",
             "comment": "Fall or near-fall incidents with status cancelled or resolved that have no recorded caregiver review. A cancellation is not a review outcome and does not mean there was no fall."
           }
         ],
@@ -184,7 +184,7 @@
       "name": "safestep_lifecycle",
       "displayName": "SafeStep Lifecycle Events",
       "config": {
-        "source": "SELECT *,\n       MIN(CASE WHEN lifecycle IN ('alerted', 'delivered') THEN logged_at END)\n         OVER (PARTITION BY incident_id) AS incident_alert_at\nFROM workspace.safestep.lifecycle_events",
+        "source": "SELECT * EXCEPT (event_type),\n       CASE WHEN event_type IN ('fall', 'possible_fall') THEN 'fall_detected' ELSE event_type END AS event_type,\n       MIN(CASE WHEN lifecycle IN ('alerted', 'delivered') THEN logged_at END)\n         OVER (PARTITION BY incident_id) AS incident_alert_at\nFROM workspace.safestep.lifecycle_events",
         "measures": [
           {
             "name": "events",
@@ -196,7 +196,7 @@
           },
           {
             "name": "fall_events",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall')"
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type = 'fall_detected')"
           },
           {
             "name": "prevention_events",
@@ -325,8 +325,8 @@
                   "datasetName": "safestep_incidents",
                   "fields": [
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -336,13 +336,13 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls (selected date range)"
+                "title": "Detected falls (selected date range)"
               },
               "version": 2,
               "widgetType": "counter",
               "encodings": {
                 "value": {
-                  "fieldName": "measure(possible_falls)",
+                  "fieldName": "measure(fall_detections)",
                   "rowNumber": 0
                 }
               },
@@ -544,8 +544,8 @@
                       "expression": "`status`"
                     },
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -555,7 +555,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by status"
+                "title": "Detected falls by status"
               },
               "version": 3,
               "widgetType": "bar",
@@ -568,8 +568,8 @@
                   }
                 },
                 "y": {
-                  "fieldName": "measure(possible_falls)",
-                  "displayName": "possible_falls",
+                  "fieldName": "measure(fall_detections)",
+                  "displayName": "fall_detections",
                   "scale": {
                     "type": "quantitative"
                   }
@@ -675,7 +675,7 @@
               "encodings": {
                 "text": {
                   "lines": [
-                    "How to read this dashboard: **possible falls are detections, not confirmed injuries**. A cancelled alert is a cancellation, not proof of a false alarm. Confidence is the detector's fall evidence score (how far, how fast and how flat the drop was): a heuristic score, not a probability of a fall or of injury. Nothing here shows that the system prevented a fall. Empty tiles mean no matching events in the current filters and date range."
+                    "How to read this dashboard: **fall detections do not confirm injuries**. A cancelled alert is a cancellation, not proof of a false alarm. Confidence is a detection score, not a probability of injury. Nothing here shows that the system prevented a fall. Empty tiles mean no matching events in the current filters and date range."
                   ],
                   "fields": []
                 }
@@ -706,9 +706,9 @@
               "encodings": {
                 "text": {
                   "lines": [
-                    "All charts on this page show **detected possible falls** — events the SafeStep system flagged as possible falls. They are **not confirmed injuries**, and nothing here confirms that an injury occurred. Confidence is the detector's **fall evidence score**, combining how far and how fast the person dropped and how horizontal they ended up. It is a heuristic score, **not a probability** of a fall or of injury, and not a medical risk measure. A cancelled alert means the alert was cancelled — it is **not proof that the detection was a false alarm**.\n",
+                    "All charts on this page show **detected falls** — events the SafeStep system flagged as fall detections. They are **not confirmed injuries**, and nothing here confirms that an injury occurred. Detection confidence is the model's score for the detection itself; it is **not a probability of injury** and not a medical risk measure. A cancelled alert means the alert was cancelled — it is **not proof that the detection was a false alarm**.\n",
                     "\n",
-                    "Time-based charts on this page use **alert time** (when the alert was sent), not detection time. Possible falls that never produced an alert are excluded from those alert-time charts rather than silently shown at another time."
+                    "Time-based charts on this page use **alert time** (when the alert was sent), not detection time. Fall detections that never produced an alert are excluded from those alert-time charts rather than silently shown at another time."
                   ],
                   "fields": []
                 }
@@ -736,8 +736,8 @@
                       "expression": "`incident_day`"
                     },
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -747,7 +747,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by day (by alert time)"
+                "title": "Detected falls by day (by alert time)"
               },
               "version": 3,
               "widgetType": "line",
@@ -760,8 +760,8 @@
                   }
                 },
                 "y": {
-                  "fieldName": "measure(possible_falls)",
-                  "displayName": "possible_falls",
+                  "fieldName": "measure(fall_detections)",
+                  "displayName": "fall_detections",
                   "scale": {
                     "type": "quantitative"
                   }
@@ -793,8 +793,8 @@
                       "expression": "`hour_of_day`"
                     },
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -804,7 +804,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by hour of day (by alert time)"
+                "title": "Detected falls by hour of day (by alert time)"
               },
               "version": 3,
               "widgetType": "bar",
@@ -817,8 +817,8 @@
                   }
                 },
                 "y": {
-                  "fieldName": "measure(possible_falls)",
-                  "displayName": "possible_falls",
+                  "fieldName": "measure(fall_detections)",
+                  "displayName": "fall_detections",
                   "scale": {
                     "type": "quantitative"
                   }
@@ -857,8 +857,8 @@
                       "expression": "`room`"
                     },
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -868,7 +868,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by room"
+                "title": "Detected falls by room"
               },
               "version": 3,
               "widgetType": "bar",
@@ -881,8 +881,8 @@
                   }
                 },
                 "y": {
-                  "fieldName": "measure(possible_falls)",
-                  "displayName": "possible_falls",
+                  "fieldName": "measure(fall_detections)",
+                  "displayName": "fall_detections",
                   "scale": {
                     "type": "quantitative"
                   }
@@ -921,8 +921,8 @@
                       "expression": "`confidence_band`"
                     },
                     {
-                      "name": "measure(possible_falls)",
-                      "expression": "MEASURE(`possible_falls`)"
+                      "name": "measure(fall_detections)",
+                      "expression": "MEASURE(`fall_detections`)"
                     }
                   ],
                   "disaggregated": false
@@ -932,7 +932,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by fall evidence band (heuristic score, not a probability)"
+                "title": "Detected falls by confidence band (detection score, not injury probability)"
               },
               "version": 3,
               "widgetType": "bar",
@@ -945,8 +945,8 @@
                   }
                 },
                 "y": {
-                  "fieldName": "measure(possible_falls)",
-                  "displayName": "possible_falls",
+                  "fieldName": "measure(fall_detections)",
+                  "displayName": "fall_detections",
                   "scale": {
                     "type": "quantitative"
                   }
@@ -1745,7 +1745,7 @@
               "encodings": {
                 "text": {
                   "lines": [
-                    "**Prevention signals are not fall incidents.** This page shows near-falls and other hazard events — obstacles, low light, night wandering, and inactivity where present in the data — separately from detected possible falls, so they are never counted toward fall totals. These are detected warning signs about the environment or behaviour. Nothing on this dashboard shows that any fall was prevented.\n",
+                    "**Prevention signals are not fall incidents.** This page shows near-falls and other hazard events — obstacles, low light, night wandering, and inactivity where present in the data — separately from detected falls, so they are never counted toward fall totals. These are detected warning signs about the environment or behaviour. Nothing on this dashboard shows that any fall was prevented.\n",
                     "\n",
                     "Time charts on this page use **alert time** where the event produced an alert; events with no alert keep their **detection time** so they stay visible rather than disappearing from the charts."
                   ],
@@ -3065,7 +3065,7 @@
                   ],
                   "filters": [
                     {
-                      "expression": "`event_type` IN ('fall', 'near_fall')"
+                      "expression": "`event_type` IN ('fall_detected', 'near_fall')"
                     }
                   ],
                   "disaggregated": true

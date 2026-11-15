@@ -112,7 +112,7 @@ class WeeklyReportTests(unittest.TestCase):
             escalations INT DEFAULT 0, delivery_failed BOOLEAN DEFAULT 0, alert_sent BOOLEAN DEFAULT 0);
             CREATE TABLE lifecycle_events (logged_at TEXT);''')
 
-        def incident(identifier, timestamp, event='fall', status='resolved', room='Bedroom', **fields):
+        def incident(identifier, timestamp, event='fall_detected', status='resolved', room='Bedroom', **fields):
             row = dict(incident_id=identifier, timestamp=timestamp, event_type=event,
                        status=status, room=room, **fields)
             conn.execute('INSERT INTO incidents (' + ','.join(row) + ') VALUES (' + ','.join('?' for _ in row) + ')', tuple(row.values()))

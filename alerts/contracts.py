@@ -20,8 +20,8 @@ service. Detector-sent `status`, `notification` or `review` objects are
 ignored (they stay in the raw logged payload only). Reviews use the service's
 review_outcome workflow.
 
-The older dialect used by safestep_client.py ({"type": "fall", ...}) has no
-`event_type` key and is passed through unchanged, so the simulator keeps working.
+The older dialect used by safestep_client.py ({"type": "fall_detected", ...}) has no
+`event_type` key. Its fields are preserved; only historical fall names are normalized.
 """
 from __future__ import annotations
 
@@ -29,9 +29,13 @@ from datetime import datetime
 
 REQUIRED = ("event_id", "device_id", "room", "timestamp", "event_type",
             "confidence", "person_detected")
-TYPE_MAP = {"possible_fall": "fall"}  # agreed name -> alert-service catalog name
-FOLLOW_UP_TYPES = ("immobility", "recovered")  # may reference an earlier fall
+TYPE_MAP = {"fall": "fall_detected", "possible_fall": "fall_detected"}
 PASSTHROUGH = ("zone", "person", "snapshot_url", "lat", "lng", "title", "advice")
+
+
+def canonical_event_type(value):
+    """Read old event names while emitting the current fall_detected name."""
+    return TYPE_MAP.get(value, value) if isinstance(value, str) else value
 
 
 def _number(payload: dict, key: str) -> float:
@@ -46,7 +50,7 @@ def to_internal(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("event must be a JSON object")
     if "event_type" not in payload and "type" in payload:
-        return payload  # legacy dialect (safestep_client.py)
+        return {**payload, "type": canonical_event_type(payload["type"])}
 
     missing = [k for k in REQUIRED if k not in payload]
     if missing:
@@ -90,7 +94,7 @@ def to_internal(payload: dict) -> dict:
         details = f"No movement for {immobility:.0f}s"
 
     evt = {
-        "type": TYPE_MAP.get(raw_type, raw_type),
+        "type": canonical_event_type(raw_type),
         "event_id": payload["event_id"].strip(),
         "device_id": payload["device_id"].strip(),
         "camera_id": payload.get("camera_id") or payload["device_id"].strip(),

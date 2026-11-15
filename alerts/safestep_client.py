@@ -55,7 +55,7 @@ class SafeStepClient:
 
     # ---- emergencies (synchronous: you get the incident id back) ---------
     def fall(self, confidence: float, **fields) -> str | None:
-        r = self.send("fall", confidence=confidence, **fields)
+        r = self.send("fall_detected", confidence=confidence, **fields)
         return r and r.get("incident_id")
 
     def help_request(self, **fields) -> str | None:

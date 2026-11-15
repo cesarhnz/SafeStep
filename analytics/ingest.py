@@ -97,7 +97,8 @@ def row_to_record(line: bytes) -> dict | None:
         "incident_id": _str(row.get("incident_id")),
         "source_event_id": _str(row.get("source_event_id")),
         "device_id": _str(row.get("device_id")),
-        "event_type": _str(row.get("type")),
+        "event_type": {"fall": "fall_detected", "possible_fall": "fall_detected"}.get(
+            _str(row.get("type")), _str(row.get("type"))),
         "status": _str(row.get("status")),
         "room": _str(row.get("room")),
         "zone": _str(row.get("zone")),

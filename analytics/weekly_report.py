@@ -99,12 +99,12 @@ WITH periods AS (
   UNION ALL SELECT 'previous', CAST(:previous AS TIMESTAMP), CAST(:start AS TIMESTAMP)
 )
 SELECT p.period, COUNT(i.incident_id) AS incidents,
-       COUNT(CASE WHEN event_type = 'fall' THEN 1 END) AS falls,
+       COUNT(CASE WHEN event_type = 'fall_detected' THEN 1 END) AS falls,
        COUNT(CASE WHEN event_type = 'near_fall' THEN 1 END) AS near_falls,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND review_outcome = 'confirmed_fall' THEN 1 END) AS confirmed,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND review_outcome = 'no_fall' THEN 1 END) AS no_fall,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND review_outcome = 'unsure' THEN 1 END) AS unsure,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND review_outcome IS NULL THEN 1 END) AS unreviewed,
+       COUNT(CASE WHEN event_type IN ('fall_detected','near_fall') AND review_outcome = 'confirmed_fall' THEN 1 END) AS confirmed,
+       COUNT(CASE WHEN event_type IN ('fall_detected','near_fall') AND review_outcome = 'no_fall' THEN 1 END) AS no_fall,
+       COUNT(CASE WHEN event_type IN ('fall_detected','near_fall') AND review_outcome = 'unsure' THEN 1 END) AS unsure,
+       COUNT(CASE WHEN event_type IN ('fall_detected','near_fall') AND review_outcome IS NULL THEN 1 END) AS unreviewed,
        COUNT(CASE WHEN alerted_at IS NOT NULL THEN 1 END) AS alerts,
        COUNT(CASE WHEN alerted_at IS NOT NULL AND acknowledged_at IS NOT NULL THEN 1 END) AS acknowledged,
        COUNT(CASE WHEN escalations > 0 THEN 1 END) AS escalated,
@@ -122,13 +122,13 @@ SELECT COALESCE(NULLIF(TRIM(room), ''), 'Room not recorded') AS room,
        COUNT(*) AS detections
 FROM {namespace}.incidents
 WHERE `timestamp` >= CAST(:start AS TIMESTAMP) AND `timestamp` < CAST(:end AS TIMESTAMP)
-  AND event_type IN ('fall', 'near_fall')
+  AND event_type IN ('fall_detected', 'near_fall')
 GROUP BY 1 ORDER BY detections DESC, room LIMIT 3
 """
 BACKLOG_SQL = """
-SELECT COUNT(CASE WHEN alerted_at IS NOT NULL AND NOT alert_sent AND status NOT IN ('cancelled','resolved','recovered') THEN 1 END) AS unaccepted,
-       COUNT(CASE WHEN alerted_at IS NOT NULL AND acknowledged_at IS NULL AND status NOT IN ('cancelled','resolved','recovered') THEN 1 END) AS unanswered,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND status IN ('cancelled','resolved','recovered') AND review_outcome IS NULL THEN 1 END) AS reviews,
+SELECT COUNT(CASE WHEN alerted_at IS NOT NULL AND NOT alert_sent AND status NOT IN ('cancelled','resolved') THEN 1 END) AS unaccepted,
+       COUNT(CASE WHEN alerted_at IS NOT NULL AND acknowledged_at IS NULL AND status NOT IN ('cancelled','resolved') THEN 1 END) AS unanswered,
+       COUNT(CASE WHEN event_type IN ('fall_detected','near_fall') AND status IN ('cancelled','resolved') AND review_outcome IS NULL THEN 1 END) AS reviews,
        COUNT(CASE WHEN `timestamp` IS NULL THEN 1 END) AS missing_timestamp
 FROM {namespace}.incidents
 """
@@ -224,11 +224,11 @@ def render_report(data, start, end, now, config, demo=False):
         actions.append(f'Check source data: {quantity(b["missing_timestamp"], "incident has", "incidents have")} no detection timestamp and cannot appear in weekly trends.')
     if not actions:
         actions.append('No outstanding items in the tracked delivery, acknowledgement, and review queues at generation time.')
-    headline = (f'{quantity(c["falls"], "possible fall detection")}, {quantity(c["near_falls"], "near-fall detection")}, '
+    headline = (f'{quantity(c["falls"], "fall detection")}, {quantity(c["near_falls"], "near-fall detection")}, '
                 f'and {quantity(c["confirmed"], "caregiver-reported confirmed fall")}.')
     if c['incidents'] == 0:
         headline = 'No incidents were recorded for this reporting week. This does not establish that no events occurred or that monitoring was active.'
-    tiles = [('Possible falls', str(c['falls']), change(c['falls'], p['falls'])),
+    tiles = [('Falls detected', str(c['falls']), change(c['falls'], p['falls'])),
              ('Near-fall detections', str(c['near_falls']), change(c['near_falls'], p['near_falls'])),
              ('Caregiver-confirmed', str(c['confirmed']), 'Across fall / near-fall detections'),
              ('Median response', duration(c['median_ack']), f'{c["ack_samples"]} valid samples; prior {duration(p["median_ack"])} ({p["ack_samples"]} samples)')]
