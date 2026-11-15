@@ -1,18 +1,18 @@
 -- Dashboard queries. All read safestep.incidents unless noted.
 
--- 1. Possible falls by room and hour of day
-SELECT room, hour(`timestamp`) AS hour_of_day, COUNT(*) AS possible_falls
+-- 1. Falls detected by room and hour of day
+SELECT room, hour(`timestamp`) AS hour_of_day, COUNT(*) AS fall_detections
 FROM safestep.incidents
-WHERE event_type = 'fall'
+WHERE event_type = 'fall_detected'
 GROUP BY room, hour(`timestamp`)
 ORDER BY room, hour_of_day;
 
 -- 2. Cancellation rate (not a verified false-alarm rate; includes late cancellations)
-SELECT COUNT(*) AS possible_falls,
+SELECT COUNT(*) AS fall_detections,
        SUM(CASE WHEN cancelled_at IS NOT NULL THEN 1 ELSE 0 END) AS cancelled,
        ROUND(100.0 * SUM(CASE WHEN cancelled_at IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS cancellation_pct
 FROM safestep.incidents
-WHERE event_type = 'fall';
+WHERE event_type = 'fall_detected';
 
 -- 3. Time for a caregiver to acknowledge, by room
 SELECT room,
@@ -32,7 +32,7 @@ SELECT CASE WHEN cancelled_at IS NOT NULL THEN 'cancelled'
        ROUND(AVG(confidence), 3) AS avg_confidence,
        ROUND(AVG(immobility_seconds), 1) AS avg_immobility_s
 FROM safestep.incidents
-WHERE event_type = 'fall'
+WHERE event_type = 'fall_detected'
 GROUP BY 1;
 
 -- 5. Incidents nobody answered in time
@@ -56,13 +56,13 @@ GROUP BY camera_id, room;
 -- 8. Caregiver-reported outcomes, distinct from cancellations and clinical adjudication.
 SELECT COALESCE(review_outcome, 'unreviewed') AS caregiver_outcome, COUNT(*) AS incidents
 FROM safestep.incidents
-WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved')
+WHERE event_type IN ('fall_detected', 'near_fall') AND status IN ('cancelled', 'resolved')
 GROUP BY COALESCE(review_outcome, 'unreviewed');
 
 -- 9. Closed detections awaiting review
 SELECT incident_id, room, `timestamp`, event_type, status
 FROM safestep.incidents
-WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved')
+WHERE event_type IN ('fall_detected', 'near_fall') AND status IN ('cancelled', 'resolved')
   AND review_outcome IS NULL
 ORDER BY `timestamp` DESC;
 

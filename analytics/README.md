@@ -67,3 +67,7 @@ Validation: `python3 -m unittest discover -s analytics/tests -v`. Review join be
 ## Weekly caregiver email
 
 [Databricks-managed snapshot emails](databricks/README.md) refresh the published SafeStep dashboard and email its snapshot to configured recipients. No recipient mailbox credentials are needed. The default schedule is Sunday at 8:00 a.m. America/Chicago; edit the Job schedule and task Subscribers in Databricks, or redeploy with `analytics/deploy_dashboard_email.py` after changing the private report settings. Use `--send-now` to request a one-time snapshot. The custom HTML/SMTP digest remains an optional alternative.
+
+## Fall event naming
+
+Fall events now use `fall_detected` throughout the contract, alerts, queries, dashboard labels, and reports. Existing fields, event types, alert timing, and dashboard layout are unchanged. The incident view and dashboard lifecycle source normalize historical fall aliases without rewriting the stored table. Apply the view with `python analytics/ingest.py --init` and replace/publish the updated dashboard definition to use the new names in a deployed workspace.

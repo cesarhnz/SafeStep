@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS safestep.lifecycle_events (
   incident_id        STRING,
   source_event_id    STRING,     -- detector's event_id (agreed schema)
   device_id          STRING,
-  event_type         STRING,     -- alert-service type: 'fall' = agreed 'possible_fall'
+  event_type         STRING,     -- fall event name: 'fall_detected'
   status             STRING,
   room               STRING,
   zone               STRING,
@@ -67,7 +67,8 @@ SELECT l.incident_id,
        l.device_id,
        l.room,
        l.detected_at     AS `timestamp`,
-       l.event_type,
+       CASE WHEN l.event_type IN ('fall', 'possible_fall') THEN 'fall_detected'
+            ELSE l.event_type END AS event_type,
        l.confidence,
        l.status,                          -- latest lifecycle status
        l.person_detected,
