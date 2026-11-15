@@ -218,7 +218,7 @@ GENERIC_HAZARD = {
 _log_lock = threading.Lock()
 
 
-def record(inc: "Incident", lifecycle: str, **extra) -> None:
+def record(inc: "Incident", lifecycle: str, *, required: bool = False, **extra) -> None:
     row = {
         "logged_at": datetime.now(timezone.utc).isoformat(),
         "lifecycle": lifecycle,
@@ -232,6 +232,8 @@ def record(inc: "Incident", lifecycle: str, **extra) -> None:
             f.write(json.dumps(row) + "\n")
     except Exception as e:  # logging must never break alerting
         log.warning("event log write failed: %s", e)
+        if required:
+            raise OSError("Could not save review; please retry") from e
 
 
 # --------------------------------------------------------------------------
@@ -317,6 +319,10 @@ class Incident:
         self.status = "new"
         self.escalations = 0
         self.acked_by = None
+        self.review_outcome = None
+        self.review_note = None
+        self.reviewed_by = None
+        self.reviewed_at = None
         self.timer: threading.Timer | None = None
 
     # ---- formatting -----------------------------------------------------
@@ -384,6 +390,8 @@ class Incident:
             "details": self.details, "detected_at": self.detected_at,
             "priority": self.spec["priority"], "escalations": self.escalations,
             "acked_by": self.acked_by, "schema_version": 1,
+            "review_outcome": self.review_outcome, "review_note": self.review_note,
+            "reviewed_by": self.reviewed_by, "reviewed_at": self.reviewed_at,
         }
 
 
@@ -563,6 +571,7 @@ class IncidentManager:
                 msg += "\nYou may still want to check in with them."
             self._notify_all(inc, f"Cancelled: {inc.spec['title'].split(' - ')[0].title()} in {inc.room}",
                              msg, priority=3, tags=["white_check_mark"])
+            self._request_review(inc)
             return {"status": inc.status, "incident_id": inc.id}
 
     def acknowledge(self, inc_id: str, by: str = "caregiver") -> dict:
@@ -582,6 +591,8 @@ class IncidentManager:
     def resolve(self, inc_id: str, by: str = "caregiver", outcome: str | None = None) -> dict:
         with self.lock:
             inc = self._get(inc_id)
+            if inc.status == "resolved":
+                return {"status": inc.status, "incident_id": inc.id}
             self._stop_timer(inc)
             inc.status = "resolved"
             record(inc, "resolved", by=by, outcome=outcome)
@@ -589,7 +600,83 @@ class IncidentManager:
                 self._notify_all(inc, f"Resolved: incident {inc.id}",
                                  f"Marked resolved by {by}." + (f"\nOutcome: {outcome}" if outcome else ""),
                                  priority=2, tags=["heavy_check_mark"])
+            self._request_review(inc)
             return {"status": inc.status, "incident_id": inc.id}
+
+    def _request_review(self, inc: Incident) -> None:
+        if inc.type not in ("fall", "near_fall"):
+            return
+        actions = [{
+            "action": "http", "label": label,
+            "url": f"{CFG['ntfy_server']}/{CFG['ntfy_ack_topic']}",
+            "method": "POST", "body": f"review {inc.id} {value}",
+            "headers": _auth_headers(), "clear": True,
+        } for value, label in (("confirmed_fall", "Confirmed fall"),
+                               ("no_fall", "No fall"), ("unsure", "Unsure"))]
+        publish_async(CFG["ntfy_topic"], f"Review incident {inc.id}: {inc.room}",
+                      f"What happened? Record your observation using a button below.\n"
+                      f"To add a note or correct a review, post to the caregiver ack topic:\n"
+                      f"review {inc.id} <confirmed_fall|no_fall|unsure> [optional note]\n"
+                      "This records an outcome; it does not change the incident status.",
+                      priority=2, tags=["memo"], actions=actions)
+
+    def review(self, inc_id: str, outcome: str, note: str | None = None,
+               by: str = "caregiver") -> dict:
+        """Append a caregiver observation without changing emergency state or timers."""
+        if outcome not in ("confirmed_fall", "no_fall", "unsure"):
+            raise ValueError("outcome must be confirmed_fall, no_fall, or unsure")
+        if note is not None and (not isinstance(note, str) or len(note) > 2000):
+            raise ValueError("note must be a string of at most 2000 characters")
+        if not isinstance(by, str) or not by.strip() or len(by) > 200:
+            raise ValueError("by must be a non-empty string of at most 200 characters")
+        note = (note or "").strip() or None
+        with self.lock:
+            inc = self._get_for_review(inc_id)
+            if inc.type not in ("fall", "near_fall"):
+                raise ValueError("only fall and near_fall incidents can be reviewed")
+            if inc.status not in ("cancelled", "resolved"):
+                raise ValueError("cancel or resolve the incident before reviewing it")
+            if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
+                previous = (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at)
+                inc.review_outcome = outcome
+                inc.review_note = note
+                inc.reviewed_by = by.strip()
+                inc.reviewed_at = datetime.now(timezone.utc).isoformat()
+                try:
+                    record(inc, "reviewed", required=True, by=inc.reviewed_by)
+                except OSError:
+                    (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at) = previous
+                    raise
+                publish_async(CFG["ntfy_topic"], f"Review saved: incident {inc.id}",
+                              f"Outcome: {outcome}. Recorded by {inc.reviewed_by}.", priority=2,
+                              tags=["memo", "white_check_mark"])
+            return inc.to_dict()
+
+    def _get_for_review(self, inc_id: str) -> Incident:
+        """Recover closed incidents from the retained log after a service restart."""
+        key = str(inc_id).upper()
+        if key in self.incidents:
+            return self.incidents[key]
+        last = None
+        path = BASE_DIR / CFG["event_log"]
+        if path.exists():
+            with _log_lock, path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict) and row.get("incident_id") == key:
+                        last = row
+        if not last or last.get("status") not in ("cancelled", "resolved"):
+            raise KeyError(f"unknown closed incident {inc_id}")
+        inc = Incident(last, dict(CATALOG.get(last["type"], GENERIC_HAZARD)))
+        for field in inc.to_dict():
+            if field in last and hasattr(inc, field):
+                setattr(inc, field, last[field])
+        inc.id = key
+        self.incidents[key] = inc
+        return inc
 
     def _get(self, inc_id: str) -> Incident:
         inc = self.incidents.get(str(inc_id).upper())
@@ -667,8 +754,15 @@ def ack_listener_loop() -> None:
                             MANAGER.acknowledge(inc_id, by="Caregiver (ntfy)")
                         elif cmd in ("resolve", "done"):
                             MANAGER.resolve(inc_id, by="Caregiver (ntfy)", outcome=" ".join(parts[2:]) or None)
-                    except KeyError as e:
+                        elif cmd == "review":
+                            if len(parts) < 3:
+                                raise ValueError("review needs an outcome")
+                            MANAGER.review(inc_id, parts[2], " ".join(parts[3:]) or None,
+                                           by="Caregiver (ntfy)")
+                    except (KeyError, ValueError, OSError) as e:
                         log.warning("ack for %s", e)
+                        if cmd == "review":
+                            publish_async(CFG["ntfy_topic"], "Review not saved", str(e), priority=2)
         except Exception as e:
             log.warning("ack listener reconnecting: %s", e)
             time.sleep(5)
@@ -742,8 +836,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, MANAGER.acknowledge(inc_id, by or "caregiver"))
                 elif action == "resolve":
                     self._send(200, MANAGER.resolve(inc_id, by or "caregiver", body.get("outcome")))
+                elif action == "review":
+                    self._send(200, MANAGER.review(inc_id, body.get("outcome"), body.get("note"),
+                                                   by if by is not None else "caregiver"))
                 else:
-                    self._send(404, {"error": "use /incidents/<id>/cancel|ack|resolve"})
+                    self._send(404, {"error": "use /incidents/<id>/cancel|ack|resolve|review"})
             else:
                 self._send(404, {"error": "not found"})
         except KeyError as e:

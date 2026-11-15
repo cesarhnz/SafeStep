@@ -51,3 +51,15 @@ python3 -m unittest discover -s analytics/tests -v
 Connector reference: [Databricks SQL Connector](https://docs.databricks.com/aws/en/dev-tools/python-sql-connector), [native parameter limits](https://github.com/databricks/databricks-sql-python/blob/main/docs/parameters.md).
 
 The SQL connector uses the `certifi` CA bundle for TLS verification. If your network requires an organization CA bundle, export `DATABRICKS_CA_BUNDLE=/absolute/path/to/ca-bundle.pem`. Certificate verification stays enabled.
+
+## Enable caregiver reviews on an existing deployment
+
+1. Deploy the updated alert service and restart it. Retain its event log.
+2. With your existing Databricks environment variables exported, run `python analytics/ingest.py --init --dry-run` to inspect the SQL, then `python analytics/ingest.py --init`. This creates or replaces the incident view with four additional fields: `review_outcome`, `review_note`, `reviewed_by`, and `reviewed_at`. The lifecycle table needs no migration: reviews use its existing `raw` JSON column. Existing incidents remain unreviewed until a caregiver explicitly records an outcome.
+3. Resume the shipper normally. It retains review fields in raw JSON; its checkpoint and batching format are unchanged.
+4. Replace the existing dashboard draft using `analytics/dashboard/SafeStep.lvdash.json`, then publish it. The export uses `workspace.safestep` references; adjust these if your catalog/schema differs. The new **Caregiver Reviews** page shows outcomes, a review queue count, and notes. The table includes all incidents; blank review fields indicate no review.
+5. Refresh Genie metadata or add the new view fields to its configuration as needed. Explain that `confirmed_fall`, `no_fall`, and `unsure` are caregiver reports. Null means unreviewed; cancellation is not a verified false alarm. The dashboard file does not provision a Genie Agent.
+
+The view ranks `reviewed` lifecycle rows independently so a later notification delivery row cannot erase a review. Corrected reviews use the newest review row and retain earlier versions in the lifecycle table. The SQL examples in `sql/queries.sql` include outcomes and incidents awaiting review.
+
+Validation: `python3 -m unittest discover -s analytics/tests -v`. Review join behavior is exercised locally with SQLite window functions and a JSON extraction shim; live Databricks SQL and dashboard rendering still require workspace validation.
