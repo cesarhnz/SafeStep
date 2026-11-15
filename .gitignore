@@ -113,3 +113,10 @@ alerts/data/
 
 analytics/.env
 analytics/.ingest_offset
+# Weekly reports contain caregiver addresses and private dashboard aggregates
+analytics/reports/config.json
+analytics/reports/preview.*
+analytics/reports/delivery.sqlite3*
+analytics/reports/databricks-deployment.json
+analytics/reports/dashboard-email-deployment.json
+analytics/reports/dashboard-before-native-email.json

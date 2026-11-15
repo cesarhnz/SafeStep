@@ -63,3 +63,7 @@ The SQL connector uses the `certifi` CA bundle for TLS verification. If your net
 The view ranks `reviewed` lifecycle rows independently so a later notification delivery row cannot erase a review. Corrected reviews use the newest review row and retain earlier versions in the lifecycle table. The SQL examples in `sql/queries.sql` include outcomes and incidents awaiting review.
 
 Validation: `python3 -m unittest discover -s analytics/tests -v`. Review join behavior is exercised locally with SQLite window functions and a JSON extraction shim; live Databricks SQL and dashboard rendering still require workspace validation.
+
+## Weekly caregiver email
+
+[Databricks-managed snapshot emails](databricks/README.md) refresh the published SafeStep dashboard and email its snapshot to configured recipients. No recipient mailbox credentials are needed. The default schedule is Sunday at 8:00 a.m. America/Chicago; edit the Job schedule and task Subscribers in Databricks, or redeploy with `analytics/deploy_dashboard_email.py` after changing the private report settings. Use `--send-now` to request a one-time snapshot. The custom HTML/SMTP digest remains an optional alternative.
