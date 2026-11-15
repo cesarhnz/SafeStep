@@ -2,7 +2,7 @@
 
 The active SafeStep setup uses native Databricks dashboard emails. This alternative is only for custom HTML email and requires a separate sending service.
 
-# Run the custom digest in Databricks
+## Run the custom digest in Databricks
 
 The report runs as a serverless notebook Job. Your laptop can be off. Spark queries the existing incident/lifecycle tables using the Job owner's permissions; no Databricks PAT is required inside the runtime. SMTP credentials come from Databricks Secrets. The default is Sunday 08:00 America/Chicago, configurable through the report settings wizard and redeployment.
 
@@ -23,7 +23,7 @@ The verification run queries real data, renders the HTML/text digest, and exerci
 
 ## Gmail credentials and activation
 
-The runtime defaults to Gmail (`smtp.gmail.com`, STARTTLS, port 587), with the configured sender as the login. The current private settings use your personal Gmail as sender and recipient. Both can be changed through `analytics/weekly_report.py --configure`. Gmail requires a Google App Password on an eligible account with 2-Step Verification. Put that value in the private `analytics/.env` as `SMTP_PASSWORD`; reload the exported environment, then run:
+The runtime defaults to Gmail (`smtp.gmail.com`, STARTTLS, port 587), with the configured sender as the login. Choose the sender and recipients through `analytics/weekly_report.py --configure`. Gmail requires a Google App Password on an eligible account with 2-Step Verification. Put that value in the private `analytics/.env` as `SMTP_PASSWORD`; reload the exported environment, then run:
 
 ```sh
 .venv/bin/python analytics/deploy_report_job.py --store-smtp-secret
@@ -33,7 +33,7 @@ The runtime defaults to Gmail (`smtp.gmail.com`, STARTTLS, port 587), with the c
 
 The first command creates the `safestep-email` secret scope if needed and stores `smtp-password`, without printing the value. It also refreshes the paused deployment. Scope creation uses the creator's default management permissions; it does not grant everyone access. The second command checks the report settings and secret key, changes the runtime to send mode, and unpauses the weekly schedule. Only the schedule is activated; it does not send an immediate test email. Use **Run now** on the Job if you want to send the latest due report immediately. SMTP connectivity and inbox receipt still require a real delivery check after adding the credential. Your workspace's outbound network policy must allow Gmail SMTP on port 587.
 
-The SMTP transport can be customized with the Job task parameters `smtp_host`, `smtp_port`, `smtp_security`, and `smtp_username`. Keep the password in the secret scope. Set equivalent `SMTP_*` environment variables before redeployment to retain transport customization. Changing sender to another Gmail account requires that account's app password. Recipients need permission to open the dashboard; the current existing dashboard is a draft accessible to its owner. Publish/share it before adding other caregivers.
+The SMTP transport can be customized with the Job task parameters `smtp_host`, `smtp_port`, `smtp_security`, and `smtp_username`. Keep the password in the secret scope. Set equivalent `SMTP_*` environment variables before redeployment to retain transport customization. Changing sender to another Gmail account requires that account's app password. Recipients need permission to open the dashboard. Use its published URL and grant access before adding other caregivers.
 
 ## Settings and delivery guarantees
 
@@ -43,7 +43,7 @@ Production state is `catalog.schema.weekly_report_deliveries`, beside the source
 
 **Use one owning Job per ledger.** The deployed Job has `max_concurrent_runs=1` and automatic task retries disabled. Delta does not enforce unique keys; independently running writer jobs against the same ledger are unsupported. The deployment script reuses its private local Job ID and checks for an existing matching Job before creating one. Keep `reports/databricks-deployment.json` private and retain the production ledger.
 
-A pending intent is committed before SMTP. A successful server acceptance is marked sent; retries skip sent identities. Ambiguous failures remain pending and block automatic resend for that recipient, while other recipients can succeed. After checking provider logs, override the Job task parameter `retry_uncertain=true` for a **single manual run** when a retry is appropriate. It can duplicate a previously accepted message; never save it as the scheduled default. SMTP acceptance is not proof of inbox delivery. Local SQLite delivery history is not migrated: switching hosts can resend a week already sent locally. No local real emails were sent during this setup.
+A pending intent is committed before SMTP. A successful server acceptance is marked sent; retries skip sent identities. Ambiguous failures remain pending and block automatic resend for that recipient, while other recipients can succeed. After checking provider logs, override the Job task parameter `retry_uncertain=true` for a **single manual run** when a retry is appropriate. It can duplicate a previously accepted message; never save it as the scheduled default. SMTP acceptance is not proof of inbox delivery. Local SQLite delivery history is not migrated: switching hosts can resend a week already sent locally.
 
 The local cron runner remains an alternative. Do not enable both local and hosted delivery for the same subscription.
 

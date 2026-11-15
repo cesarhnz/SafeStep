@@ -380,7 +380,7 @@ class Incident:
         if self.confidence is not None:
             try:
                 score = float(self.confidence)
-                label = "Fall evidence" if self.type in ("fall", "immobility") else "Detection score"
+                label = "Fall evidence" if self.type in ("fall_detected", "immobility") else "Detection score"
                 lines.append(f"{label}: {evidence_band(score)} (score {score:.2f} of 1; "
                              "a detection score, not a probability)")
             except (TypeError, ValueError):
@@ -755,8 +755,8 @@ class IncidentManager:
             inc = self._get_for_review(inc_id)
             if inc.type not in ("fall_detected", "near_fall"):
                 raise ValueError("only fall_detected and near_fall incidents can be reviewed")
-            if inc.status not in ("cancelled", "resolved"):
-                raise ValueError("cancel or resolve the incident before reviewing it")
+            if inc.status not in CLOSED:
+                raise ValueError("cancel, resolve, or wait for recovery before reviewing the incident")
             if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
                 previous = (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at)
                 inc.review_outcome = outcome
