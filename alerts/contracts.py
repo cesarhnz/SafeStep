@@ -2,12 +2,23 @@
 
 The detector sends the team-agreed event shape:
 
-    event_id, device_id, room, timestamp, event_type, confidence,
-    person_detected, immobility_seconds   (+ optional zone, person, snapshot_url, lat, lng)
+    event_id, device_id, room, timestamp, event_type, confidence, person_detected
+    (+ optional details, metrics, immobility_seconds, related_event_id,
+       zone, person, snapshot_url, lat, lng)
 
-`status`, `alert_sent` and `acknowledged_at` are owned by the alert service,
-so anything the detector sends for them is ignored. They are derived in
-Databricks from the lifecycle log (see analytics/sql/schema.sql).
+event_type values from the SafeStep detector:
+    possible_fall   a fall (mapped to the alert service's `fall` type)
+    immobility      still on the floor; with related_event_id it attaches to that fall
+    recovered       the person got back up; requires related_event_id
+
+`confidence` is the detector's fall evidence score (0..1, heuristic, not a
+calibrated probability). `details` is caregiver-facing text; `metrics` holds
+raw numbers for analytics and is never shown to caregivers.
+
+`status`, notification state and caregiver reviews are owned by the alert
+service. Detector-sent `status`, `notification` or `review` objects are
+ignored (they stay in the raw logged payload only). Reviews use the service's
+review_outcome workflow.
 
 The older dialect used by safestep_client.py ({"type": "fall_detected", ...}) has no
 `event_type` key. Its fields are preserved; only historical fall names are normalized.
@@ -51,9 +62,12 @@ def to_internal(payload: dict) -> dict:
     if not isinstance(payload["person_detected"], bool):
         raise ValueError("'person_detected' must be true or false")
 
-    immobility = payload.get("immobility_seconds")
+    metrics = payload.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        raise ValueError("'metrics' must be an object")
+    immobility = payload.get("immobility_seconds", metrics.get("immobility_seconds"))
     if immobility is not None:
-        immobility = _number(payload, "immobility_seconds")
+        immobility = _number({"immobility_seconds": immobility}, "immobility_seconds")
         if immobility < 0:
             raise ValueError("'immobility_seconds' must be >= 0")
 
@@ -67,10 +81,17 @@ def to_internal(payload: dict) -> dict:
             raise ValueError(f"'{key}' must be a non-empty string")
 
     raw_type = payload["event_type"].strip().lower()
-    details = str(payload.get("details") or "")
-    if immobility is not None:
-        note = f"No movement for {immobility:.0f}s"
-        details = f"{details}. {note}" if details else note
+    related = payload.get("related_event_id")
+    if related is not None and (not isinstance(related, str) or not related.strip()):
+        raise ValueError("'related_event_id' must be a non-empty string")
+    if related is not None and raw_type not in FOLLOW_UP_TYPES:
+        raise ValueError(f"'related_event_id' is only allowed for {', '.join(FOLLOW_UP_TYPES)}")
+    if raw_type == "recovered" and related is None:
+        raise ValueError("'recovered' events need 'related_event_id' (the fall's event_id)")
+
+    details = str(payload.get("details") or "").strip()
+    if not details and immobility:  # only once immobility has actually been measured
+        details = f"No movement for {immobility:.0f}s"
 
     evt = {
         "type": canonical_event_type(raw_type),
@@ -83,7 +104,11 @@ def to_internal(payload: dict) -> dict:
         "person_detected": payload["person_detected"],
         "immobility_seconds": immobility,
         "details": details,
+        "metrics": metrics,
+        "source_payload": payload,
     }
+    if related is not None:
+        evt["related_event_id"] = related.strip()
     for key in PASSTHROUGH:
         if key in payload:
             evt[key] = payload[key]

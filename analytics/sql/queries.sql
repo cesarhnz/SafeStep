@@ -10,6 +10,7 @@ ORDER BY room, hour_of_day;
 -- 2. Cancellation rate (not a verified false-alarm rate; includes late cancellations)
 SELECT COUNT(*) AS fall_detections,
        SUM(CASE WHEN cancelled_at IS NOT NULL THEN 1 ELSE 0 END) AS cancelled,
+       SUM(CASE WHEN cancelled_at IS NOT NULL AND recovered_at IS NOT NULL THEN 1 ELSE 0 END) AS got_up_in_countdown,
        ROUND(100.0 * SUM(CASE WHEN cancelled_at IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS cancellation_pct
 FROM safestep.incidents
 WHERE event_type = 'fall_detected';
@@ -22,8 +23,10 @@ FROM safestep.incidents
 WHERE acknowledged_at IS NOT NULL AND alerted_at IS NOT NULL
 GROUP BY room;
 
--- 4. Does confidence separate real alerts from cancelled ones? (use this to tune thresholds)
+-- 4. Does the fall evidence score (confidence) separate real alerts from cancelled ones?
+--    (use this to tune thresholds; it is a heuristic score, not a probability)
 SELECT CASE WHEN cancelled_at IS NOT NULL THEN 'cancelled'
+            WHEN recovered_at IS NOT NULL THEN 'got up after alert'
             WHEN acknowledged_at IS NOT NULL THEN 'acknowledged'
             WHEN alert_sent THEN 'alerted, no ack'
             WHEN alerted_at IS NOT NULL THEN 'ALERT NOT DELIVERED'
@@ -71,3 +74,21 @@ SELECT incident_id, room, `timestamp`, review_outcome, review_note, reviewed_by,
 FROM safestep.incidents
 WHERE review_outcome IS NOT NULL
 ORDER BY reviewed_at DESC;
+
+-- 11. Falls where the person stayed on the floor vs got back up (detector follow-ups)
+SELECT room,
+       COUNT(*) AS possible_falls,
+       SUM(CASE WHEN immobility_reported_at IS NOT NULL THEN 1 ELSE 0 END) AS still_on_floor,
+       SUM(CASE WHEN recovered_at IS NOT NULL THEN 1 ELSE 0 END) AS got_back_up,
+       ROUND(AVG(immobility_seconds), 1) AS avg_immobility_s
+FROM safestep.incidents
+WHERE event_type = 'fall'
+GROUP BY room;
+
+-- 12. Time from fall to standing back up (detector metric, kept in the raw JSON column)
+SELECT room,
+       COUNT(*) AS recoveries,
+       ROUND(AVG(CAST(get_json_object(raw, '$.raw_event.metrics.recovery_seconds') AS DOUBLE)), 1) AS avg_recovery_s
+FROM safestep.lifecycle_events
+WHERE lifecycle = 'recovered'
+GROUP BY room;

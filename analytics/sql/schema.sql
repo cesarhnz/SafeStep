@@ -58,6 +58,9 @@ agg AS (
          MAX(CASE WHEN lifecycle = 'delivery_failed' THEN 1 ELSE 0 END) AS had_delivery_failure,
          MIN(CASE WHEN lifecycle = 'acknowledged' THEN logged_at END) AS acknowledged_at,
          MIN(CASE WHEN lifecycle = 'cancelled'    THEN logged_at END) AS cancelled_at,
+         -- Detector follow-ups linked to the fall (see alerts/README.md)
+         MIN(CASE WHEN lifecycle = 'recovered'    THEN logged_at END) AS recovered_at,
+         MIN(CASE WHEN lifecycle = 'immobility'   THEN logged_at END) AS immobility_reported_at,
          MAX(escalations) AS escalations
   FROM safestep.lifecycle_events
   GROUP BY incident_id
@@ -70,7 +73,7 @@ SELECT l.incident_id,
        CASE WHEN l.event_type IN ('fall', 'possible_fall') THEN 'fall_detected'
             ELSE l.event_type END AS event_type,
        l.confidence,
-       l.status,                          -- latest lifecycle status
+       l.status,                          -- latest lifecycle status (closed: cancelled, resolved, recovered)
        l.person_detected,
        l.immobility_seconds,
        a.delivered_at IS NOT NULL AS alert_sent,   -- ntfy accepted at least one alert message
@@ -79,6 +82,8 @@ SELECT l.incident_id,
        a.delivered_at,
        a.acknowledged_at,
        a.cancelled_at,
+       a.recovered_at,                    -- the detector saw the person get back up
+       a.immobility_reported_at,          -- the detector reported them still on the floor
        a.escalations,
        r.review_outcome,
        r.review_note,
