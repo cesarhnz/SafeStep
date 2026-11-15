@@ -3,11 +3,11 @@
 The detector sends the team-agreed event shape:
 
     event_id, device_id, room, timestamp, event_type, confidence,
-    person_detected, immobility_seconds   (+ optional zone, person, snapshot_url, lat, lng)
+    person_detected, metrics, notification, review
 
-`status`, `alert_sent` and `acknowledged_at` are owned by the alert service,
-so anything the detector sends for them is ignored. They are derived in
-Databricks from the lifecycle log (see analytics/sql/schema.sql).
+`status` and the notification state are owned by the alert service, so values
+the detector sends for them are treated as an initial snapshot only. The
+Databricks view derives current notification state from lifecycle rows.
 
 The older dialect used by safestep_client.py ({"type": "fall", ...}) has no
 `event_type` key and is passed through unchanged, so the simulator keeps working.
@@ -46,9 +46,12 @@ def to_internal(payload: dict) -> dict:
     if not isinstance(payload["person_detected"], bool):
         raise ValueError("'person_detected' must be true or false")
 
-    immobility = payload.get("immobility_seconds")
+    metrics = payload.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        raise ValueError("'metrics' must be an object")
+    immobility = payload.get("immobility_seconds", metrics.get("immobility_seconds"))
     if immobility is not None:
-        immobility = _number(payload, "immobility_seconds")
+        immobility = _number({"immobility_seconds": immobility}, "immobility_seconds")
         if immobility < 0:
             raise ValueError("'immobility_seconds' must be >= 0")
 
@@ -63,6 +66,15 @@ def to_internal(payload: dict) -> dict:
 
     raw_type = payload["event_type"].strip().lower()
     details = str(payload.get("details") or "")
+    metric_notes = []
+    for key in ("torso_angle_deg", "vertical_velocity", "lateral_velocity",
+                "immobility_seconds", "recovery_seconds"):
+        value = metrics.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            metric_notes.append(f"{key}={value}")
+    if metric_notes:
+        note = "Detector metrics: " + ", ".join(metric_notes)
+        details = f"{details}. {note}" if details else note
     if immobility is not None:
         note = f"No movement for {immobility:.0f}s"
         details = f"{details}. {note}" if details else note
@@ -78,6 +90,9 @@ def to_internal(payload: dict) -> dict:
         "person_detected": payload["person_detected"],
         "immobility_seconds": immobility,
         "details": details,
+        "metrics": metrics,
+        "review": payload.get("review") if isinstance(payload.get("review"), dict) else {},
+        "source_payload": payload,
     }
     for key in PASSTHROUGH:
         if key in payload:

@@ -36,6 +36,8 @@ SELECT * FROM your_catalog.safestep.incidents ORDER BY timestamp DESC LIMIT 20;
 
 Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; a hosted dashboard is not provisioned. Dry-run alert delivery is simulated, so use a separate schema for demo data.
 
+The detector's event payload carries the supplied nested `metrics`, `notification`, and `review` objects. The lifecycle table retains those values in its `raw` JSON; the `incidents` view exposes `metrics` and `review` as structs and derives `notification.alert_required`, `notification.alert_sent`, `notification.alert_sent_at`, and `notification.acknowledged_at` from lifecycle rows. Existing Delta tables are not migrated by `--init`; apply the view definition from `sql/schema.sql` if you already initialized an older version.
+
 ## Recovery and operation
 
 Each successful batch advances an atomic JSON checkpoint containing the log identity and destination. Failed SQL batches retain their offset for retry. Replayed rows use a content hash and MERGE; identical rows within a batch are deduplicated. Native parameters are capped at 255, allowing at most 11 rows per batch with the current 23 columns. Default batch size is 10. Input streams one batch at a time, and incomplete trailing lines wait until the next poll. Malformed JSON stops the batch without advancing the checkpoint; repair the source row before restarting.

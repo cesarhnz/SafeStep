@@ -303,6 +303,8 @@ class Incident:
         self.device_id = evt.get("device_id")
         self.person_detected = evt.get("person_detected")
         self.immobility_seconds = evt.get("immobility_seconds")
+        self.metrics = evt.get("metrics") or {}
+        self.review = evt.get("review") or {}
         self.room = evt.get("room") or "Unknown room"
         self.zone = evt.get("zone")                  # e.g. "near the couch"
         self.camera_id = evt.get("camera_id") or "cam-1"
@@ -379,6 +381,7 @@ class Incident:
             "source_event_id": self.source_event_id, "device_id": self.device_id,
             "person_detected": self.person_detected,
             "immobility_seconds": self.immobility_seconds,
+            "metrics": self.metrics, "review": self.review,
             "room": self.room, "zone": self.zone, "camera_id": self.camera_id,
             "confidence": self.confidence, "person": self.person,
             "details": self.details, "detected_at": self.detected_at,
@@ -447,7 +450,9 @@ class IncidentManager:
 
             inc = Incident(evt, spec)
             self.incidents[inc.id] = inc
-            record(inc, "detected", raw_event=evt)
+            # Keep the detector's complete agreed payload (including nested
+            # metrics and review state) in the lifecycle log for analytics.
+            record(inc, "detected", raw_event=evt.get("source_payload", evt))
 
             window = CFG["confirm_window_s"]
             if spec["confirm"] and window > 0 and not evt.get("skip_confirmation"):

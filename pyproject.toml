@@ -1,0 +1,36 @@
+[project]
+name = "safestep"
+version = "0.1.0"
+description = "Camera-based fall detection using YOLO pose estimation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ultralytics>=8.3",
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "lap>=0.5.12", # needed by Ultralytics' ByteTrack tracker
+    # listed directly so the CPU-only index below applies to them
+    "torch>=2.2",
+    "torchvision>=0.17",
+]
+
+[project.scripts]
+safestep = "safestep.app:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# On Linux, PyPI's default torch wheel bundles CUDA (~several GB). We have no
+# GPU in WSL, so pull the much smaller CPU-only build there.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

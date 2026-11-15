@@ -29,6 +29,9 @@ Use `python alert_service.py --dry-run` to print notifications instead of sendin
 Every alert says **who, where (room + zone + camera), when, confidence, details, and numbered "What to do" steps**.
 
 ## Hooking up your detector
+
+The integrated `safestep` command posts the agreed event schema directly to `/events` when it confirms a fall. It sends `event_type: "possible_fall"`, which the service maps to its urgent `fall` workflow. The detector keeps `metrics` nested; the service includes them in lifecycle JSONL rows for Databricks. Network calls run on a background thread so a slow alert service does not stall camera processing.
+
 ```python
 from safestep_client import SafeStepClient
 ss = SafeStepClient("http://127.0.0.1:8080", camera_id="cam-1", room="Living room")
