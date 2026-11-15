@@ -19,7 +19,7 @@ Use `python alert_service.py --dry-run` to print notifications instead of sendin
 ## What the caregiver gets
 | Event `type` | Priority | Behaviour |
 |---|---|---|
-| `fall` | URGENT (5) | Heads-up right away, then `confirm_window_s` (30s) for the person to cancel. If not cancelled → urgent alert with **I'm on my way / Call 911 / Map** buttons. No ack in `escalate_after_s` → reminders + backup caregiver topic. |
+| `fall_detected` | URGENT (5) | Heads-up right away, then `confirm_window_s` (30s) for the person to cancel. If not cancelled → urgent alert with **I'm on my way / Call 911 / Map** buttons. No ack in `escalate_after_s` → reminders + backup caregiver topic. |
 | `help_request` | URGENT | Immediate, escalates |
 | `immobility` (still on floor) | URGENT | Immediate, escalates |
 | `near_fall`, `night_wandering`, `inactivity` | High (4) | Potential danger, 5-min cooldown per room |
@@ -47,7 +47,7 @@ Calls have a 3s timeout and never raise, so the CV loop can't crash on alerts.
 
 Raw HTTP, if your engine isn't Python:
 ```
-POST /events          {"type":"fall","room":"Bedroom","zone":"by bed","confidence":0.9,
+POST /events          {"type":"fall_detected","room":"Bedroom","zone":"by bed","confidence":0.9,
                        "person":"Maria","details":"...","lat":..,"lng":..,"snapshot_url":".."}
 POST /incidents/<id>/cancel | ack | resolve   {"by":"...","outcome":"..."}
 POST /heartbeat       {"camera_id":"cam-1","room":"Bedroom"}

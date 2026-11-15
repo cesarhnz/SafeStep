@@ -58,7 +58,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from contracts import to_internal
+from contracts import to_internal, canonical_event_type
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -121,7 +121,7 @@ CFG: dict = {}
 CALL_911 = "If they are unresponsive, not breathing normally, bleeding heavily, or hit their head: call 911."
 
 CATALOG: dict[str, dict] = {
-    "fall": {
+    "fall_detected": {
         "title": "FALL DETECTED - IMMEDIATE HELP NEEDED",
         "priority": 5, "tags": ["rotating_light", "sos"],
         "confirm": True, "escalate": True, "cooldown": False,
@@ -415,7 +415,7 @@ class IncidentManager:
 
     # ---- intake ----------------------------------------------------------
     def handle_event(self, evt: dict) -> dict:
-        etype = str(evt.get("type", "")).strip().lower()
+        etype = canonical_event_type(str(evt.get("type", "")).strip().lower())
         if not etype:
             raise ValueError("event needs a 'type'")
         evt["type"] = etype
@@ -432,7 +432,7 @@ class IncidentManager:
                 return {"status": "duplicate", "event_id": sid}
 
             # No person in frame: not a fall.
-            if etype == "fall" and evt.get("person_detected") is False:
+            if etype == "fall_detected" and evt.get("person_detected") is False:
                 return {"status": "ignored", "reason": "no person detected"}
 
             room = evt.get("room") or "Unknown room"
@@ -447,9 +447,9 @@ class IncidentManager:
             # A new fall in a room that already has a RECENT active fall incident
             # is the same emergency, not a new one. After fall_dedupe_s it is a
             # new fall, even if nobody ever acknowledged the old one.
-            if etype == "fall":
+            if etype == "fall_detected":
                 for inc in self.incidents.values():
-                    if (inc.type == "fall" and inc.room == room and inc.status in ACTIVE
+                    if (inc.type == "fall_detected" and inc.room == room and inc.status in ACTIVE
                             and time.monotonic() - inc.created < CFG["fall_dedupe_s"]):
                         return {"status": "duplicate", "incident_id": inc.id}
 
@@ -466,8 +466,8 @@ class IncidentManager:
                 log.info("[%s] %s in %s, waiting %ss for cancel", inc.id, etype, room, window)
                 # Early heads-up so the caregiver isn't blindsided.
                 publish_async(
-                    CFG["ntfy_topic"], f"Possible fall in {inc.room}, checking...",
-                    f"SafeStep detected a possible fall. If they don't respond in {window}s "
+                    CFG["ntfy_topic"], f"Fall detected in {inc.room}, checking...",
+                    f"SafeStep detected a fall. If they don't respond in {window}s "
                     f"you will get an URGENT alert.\nWhere: {inc.where()}\nIncident {inc.id}",
                     priority=4, tags=["warning", "hourglass"])
             else:
@@ -604,7 +604,7 @@ class IncidentManager:
             return {"status": inc.status, "incident_id": inc.id}
 
     def _request_review(self, inc: Incident) -> None:
-        if inc.type not in ("fall", "near_fall"):
+        if inc.type not in ("fall_detected", "near_fall"):
             return
         actions = [{
             "action": "http", "label": label,
@@ -632,8 +632,8 @@ class IncidentManager:
         note = (note or "").strip() or None
         with self.lock:
             inc = self._get_for_review(inc_id)
-            if inc.type not in ("fall", "near_fall"):
-                raise ValueError("only fall and near_fall incidents can be reviewed")
+            if inc.type not in ("fall_detected", "near_fall"):
+                raise ValueError("only fall_detected and near_fall incidents can be reviewed")
             if inc.status not in ("cancelled", "resolved"):
                 raise ValueError("cancel or resolve the incident before reviewing it")
             if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
@@ -670,6 +670,7 @@ class IncidentManager:
                         last = row
         if not last or last.get("status") not in ("cancelled", "resolved"):
             raise KeyError(f"unknown closed incident {inc_id}")
+        last["type"] = canonical_event_type(last["type"])
         inc = Incident(last, dict(CATALOG.get(last["type"], GENERIC_HAZARD)))
         for field in inc.to_dict():
             if field in last and hasattr(inc, field):

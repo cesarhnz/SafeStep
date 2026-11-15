@@ -25,7 +25,7 @@ class IngestionTests(unittest.TestCase):
 
     def row(self, i=0):
         return json.dumps({'incident_id': str(i), 'logged_at': '2026-11-14T20:00:00Z',
-                           'lifecycle': 'detected', 'type': 'fall'}).encode() + b'\n'
+                           'lifecycle': 'detected', 'type': 'fall_detected'}).encode() + b'\n'
 
     def test_resume_and_partial_line(self):
         self.log.write_bytes(self.row() + self.row(1)[:-1])
