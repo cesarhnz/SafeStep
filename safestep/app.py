@@ -127,6 +127,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--height", type=int, default=720, help="webcam capture height")
     ap.add_argument("--privacy", action="store_true", help="show skeletons only, no camera image")
     ap.add_argument("--no-show", action="store_true", help="don't open a preview window")
+    ap.add_argument("--diagnostics", action="store_true",
+                    help="log tracked-person arrivals, departures, and periodic frame status")
     ap.add_argument("--save", help="write the annotated video to this path (e.g. output/demo.mp4)")
     ap.add_argument("--events", help="append events as JSON lines to this file")
     ap.add_argument("--device-id", default=os.getenv("SAFESTEP_DEVICE_ID", "uno_q_01"),
@@ -166,10 +168,42 @@ def main(argv: list[str] | None = None) -> None:
     client = None if args.no_alerts else AlertClient(
         args.alert_url, args.device_id, args.room, heartbeat_s=args.heartbeat)
     stop_reason = "video source ended"
+    active_tracks: dict[int, tuple[float, float, list[float]]] = {}
+    last_diagnostic = time.monotonic()
 
     print("SafeStep running. Press q or Esc in the window to quit.", file=sys.stderr)
     try:
         for r in monitor(args.source, estimator, detector, args.privacy, args.width, args.height):
+            if args.diagnostics:
+                now = time.monotonic()
+                visible = {p.track_id: p for p in r.people}
+                for track_id, (last_seen, _, _) in list(active_tracks.items()):
+                    if track_id not in visible and now - last_seen >= 1.0:
+                        print(f"[safestep] skeleton lost: track_id={track_id}",
+                              file=sys.stderr, flush=True)
+                        del active_tracks[track_id]
+
+                for track_id, person in visible.items():
+                    if track_id not in active_tracks:
+                        bbox = [round(float(v)) for v in person.bbox]
+                        print(
+                            f"[safestep] skeleton acquired: track_id={track_id} "
+                            f"confidence={person.score:.2f} bbox={bbox}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    active_tracks[track_id] = (now, person.score, person.bbox.tolist())
+
+                if now - last_diagnostic >= 5.0:
+                    ids = sorted(visible)
+                    print(
+                        f"[safestep] camera active: fps={r.fps:.1f} "
+                        f"visible_skeletons={len(ids)} track_ids={ids}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    last_diagnostic = now
+
             for ev in r.events:
                 event = to_schema_event(ev, args.device_id, args.room)
                 line = json.dumps(event)

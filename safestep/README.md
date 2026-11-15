@@ -7,6 +7,8 @@ The active detector implementation is this package. It combines YOLO pose estima
 ```sh
 uv sync
 uv run safestep --source 0 --device-id uno_q_01 --room "Living room"
+# Headless tracking diagnostics: logs skeleton arrivals/departures and FPS/status.
+uv run safestep --source /dev/video2 --no-show --diagnostics
 # Offline processing: no alert-service calls, heartbeats, or preview window.
 uv run safestep --source clip.mp4 --no-alerts --no-show --events logs/detector-events.jsonl
 uv run safestep --help
@@ -20,6 +22,7 @@ uv run safestep --help
 | `--width`, `--height` | Webcam request: 1280 × 720 |
 | `--privacy` | Skeleton-only annotation; original frame remains in memory |
 | `--no-show` | Disable the preview window |
+| `--diagnostics` | Log tracked-person arrivals/departures and periodic FPS/visible-track status to stderr |
 | `--save` | Optional annotated-video output path |
 | `--events` | Optional append-only JSONL detector event output (not the service lifecycle log) |
 | `--no-alerts` | Disable event posting and heartbeats |
