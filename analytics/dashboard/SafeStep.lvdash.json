@@ -79,7 +79,7 @@
           },
           {
             "name": "awaiting_review_incidents",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved') AND review_outcome IS NULL)",
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall', 'near_fall') AND status IN ('cancelled', 'resolved', 'recovered') AND review_outcome IS NULL)",
             "comment": "Fall or near-fall incidents with status cancelled or resolved that have no recorded caregiver review. A cancellation is not a review outcome and does not mean there was no fall."
           }
         ],
@@ -675,7 +675,7 @@
               "encodings": {
                 "text": {
                   "lines": [
-                    "How to read this dashboard: **possible falls are detections, not confirmed injuries**. A cancelled alert is a cancellation, not proof of a false alarm. Confidence is a detection score, not a probability of injury. Nothing here shows that the system prevented a fall. Empty tiles mean no matching events in the current filters and date range."
+                    "How to read this dashboard: **possible falls are detections, not confirmed injuries**. A cancelled alert is a cancellation, not proof of a false alarm. Confidence is the detector's fall evidence score (how far, how fast and how flat the drop was): a heuristic score, not a probability of a fall or of injury. Nothing here shows that the system prevented a fall. Empty tiles mean no matching events in the current filters and date range."
                   ],
                   "fields": []
                 }
@@ -706,7 +706,7 @@
               "encodings": {
                 "text": {
                   "lines": [
-                    "All charts on this page show **detected possible falls** — events the SafeStep system flagged as possible falls. They are **not confirmed injuries**, and nothing here confirms that an injury occurred. Detection confidence is the model's score for the detection itself; it is **not a probability of injury** and not a medical risk measure. A cancelled alert means the alert was cancelled — it is **not proof that the detection was a false alarm**.\n",
+                    "All charts on this page show **detected possible falls** — events the SafeStep system flagged as possible falls. They are **not confirmed injuries**, and nothing here confirms that an injury occurred. Confidence is the detector's **fall evidence score**, combining how far and how fast the person dropped and how horizontal they ended up. It is a heuristic score, **not a probability** of a fall or of injury, and not a medical risk measure. A cancelled alert means the alert was cancelled — it is **not proof that the detection was a false alarm**.\n",
                     "\n",
                     "Time-based charts on this page use **alert time** (when the alert was sent), not detection time. Possible falls that never produced an alert are excluded from those alert-time charts rather than silently shown at another time."
                   ],
@@ -932,7 +932,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Detected possible falls by confidence band (detection score, not injury probability)"
+                "title": "Detected possible falls by fall evidence band (heuristic score, not a probability)"
               },
               "version": 3,
               "widgetType": "bar",

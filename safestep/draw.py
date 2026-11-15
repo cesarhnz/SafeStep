@@ -42,6 +42,9 @@ def draw_overlay(
         x1, y1, x2, y2 = map(int, p.bbox)
         cv2.rectangle(canvas, (x1, y1), (x2, y2), color, max(1, lw - 1))
         label = f"#{p.track_id} {detector.phase_of(p.track_id).value.upper()}"
+        still = detector.still_seconds(p.track_id)
+        if still is not None and still >= 1:
+            label += f" still {still:.0f}s"
         _label(canvas, label, (x1, y1), color, s)
 
     if detector.fallen_ids:

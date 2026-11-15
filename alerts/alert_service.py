@@ -38,6 +38,15 @@ Changes in this version
   * A malformed confidence/timestamp can no longer stop an alert from being built.
   * Timer and watchdog threads log errors instead of dying silently.
   * GET /health no longer reveals the private ntfy topic; GET /incidents needs the API key.
+  * Detector follow-ups attach to the original fall through `related_event_id`:
+    - "recovered" during the countdown cancels the pending fall (no urgent alert);
+      after the urgent alert it marks the incident `recovered` and stops reminders.
+    - "immobility" (still on the floor) escalates that same incident once,
+      instead of opening an unrelated one.
+  * `confidence` is shown as fall evidence (low / medium / high / very high),
+    not as a percentage, because it is a heuristic score, not a probability.
+  * A heartbeat with status "stopped" (clean detector shutdown) raises the
+    offline alert immediately instead of waiting for heartbeat_timeout_s.
 
 Standard library only. Python 3.9+.
 """
@@ -286,14 +295,29 @@ def publish_async(*args, **kwargs) -> None:
 # Incidents and the alert state machine
 # --------------------------------------------------------------------------
 #   pending_confirmation --(timer)--> alerted --(no ack)--> escalated ...
-#        |  cancel                      |  ack / cancel / resolve
+#        |  cancel / person got up      |  ack / cancel / resolve / person got up
 #        v                              v
-#    cancelled                acknowledged / resolved
+#    cancelled            acknowledged / resolved / recovered
 #
-# Extra lifecycle rows in the event log (they don't change `status`):
+# Extra lifecycle rows in the event log (they don't change `status` by themselves):
 #   delivered / delivery_failed: whether ntfy accepted an alert message
+#   recovered:  the detector saw the person get back up
+#   immobility: the detector reported them still on the floor
 
 ACTIVE = {"pending_confirmation", "alerted", "escalated"}
+CLOSED = ("cancelled", "resolved", "recovered")   # reviewable; no longer alerting
+DETECTOR = "SafeStep detector"
+
+
+def evidence_band(score: float) -> str:
+    """Same bands as the detector and the Databricks dashboard's confidence_band."""
+    if score < 0.5:
+        return "low"
+    if score < 0.7:
+        return "medium"
+    if score < 0.85:
+        return "high"
+    return "very high"
 
 
 class Incident:
@@ -306,7 +330,8 @@ class Incident:
         self.person_detected = evt.get("person_detected")
         self.immobility_seconds = evt.get("immobility_seconds")
         self.metrics = evt.get("metrics") or {}
-        self.review = evt.get("review") or {}
+        self.recovered_at = None
+        self.immobility_reported_at = None
         self.room = evt.get("room") or "Unknown room"
         self.zone = evt.get("zone")                  # e.g. "near the couch"
         self.camera_id = evt.get("camera_id") or "cam-1"
@@ -354,7 +379,10 @@ class Incident:
         lines.append(f"When: {self.when()}")
         if self.confidence is not None:
             try:
-                lines.append(f"Detection confidence: {round(float(self.confidence) * 100)}%")
+                score = float(self.confidence)
+                label = "Fall evidence" if self.type in ("fall", "immobility") else "Detection score"
+                lines.append(f"{label}: {evidence_band(score)} (score {score:.2f} of 1; "
+                             "a detection score, not a probability)")
             except (TypeError, ValueError):
                 pass  # a bad confidence value must not stop the alert
         if self.details:
@@ -387,7 +415,8 @@ class Incident:
             "source_event_id": self.source_event_id, "device_id": self.device_id,
             "person_detected": self.person_detected,
             "immobility_seconds": self.immobility_seconds,
-            "metrics": self.metrics, "review": self.review,
+            "metrics": self.metrics,
+            "recovered_at": self.recovered_at, "immobility_reported_at": self.immobility_reported_at,
             "room": self.room, "zone": self.zone, "camera_id": self.camera_id,
             "confidence": self.confidence, "person": self.person,
             "details": self.details, "detected_at": self.detected_at,
@@ -407,6 +436,7 @@ class IncidentManager:
         self.last_hazard: dict[tuple[str, str], float] = {}
         self.heartbeats: dict[str, dict] = {}   # camera_id -> {"t", "room", "offline"}
         self.seen_event_ids: OrderedDict[str, None] = OrderedDict()
+        self.by_event_id: dict[str, str] = {}   # detector event_id -> incident id
 
     def _seen_before(self, event_id: str) -> bool:
         if event_id in self.seen_event_ids:
@@ -434,6 +464,16 @@ class IncidentManager:
             if sid and self._seen_before(str(sid)):
                 return {"status": "duplicate", "event_id": sid}
 
+            # Detector follow-ups belong to the fall they reference.
+            if etype == "recovered":
+                return self._handle_recovery(evt)
+            if etype == "immobility" and evt.get("related_event_id"):
+                linked = self._linked(evt["related_event_id"])
+                if linked:
+                    return self._handle_linked_immobility(linked, evt)
+                # Unknown fall (e.g. the service restarted): still alert, as a
+                # standalone incident, because someone may be on the floor.
+
             # No person in frame: not a fall.
             if etype == "fall" and evt.get("person_detected") is False:
                 return {"status": "ignored", "reason": "no person detected"}
@@ -454,12 +494,16 @@ class IncidentManager:
                 for inc in self.incidents.values():
                     if (inc.type == "fall" and inc.room == room and inc.status in ACTIVE
                             and time.monotonic() - inc.created < CFG["fall_dedupe_s"]):
+                        if sid:  # so this fall's follow-ups find the merged incident
+                            self.by_event_id[str(sid)] = inc.id
                         return {"status": "duplicate", "incident_id": inc.id}
 
             inc = Incident(evt, spec)
             self.incidents[inc.id] = inc
+            if sid:
+                self.by_event_id[str(sid)] = inc.id
             # Keep the detector's complete agreed payload (including nested
-            # metrics and review state) in the lifecycle log for analytics.
+            # metrics) in the lifecycle log for analytics.
             record(inc, "detected", raw_event=evt.get("source_payload", evt))
 
             window = CFG["confirm_window_s"]
@@ -560,7 +604,7 @@ class IncidentManager:
         if inc.escalations and CFG["ntfy_escalation_topic"]:
             publish_async(CFG["ntfy_escalation_topic"], title, msg, priority=priority, tags=tags)
 
-    def cancel(self, inc_id: str, by: str = "person") -> dict:
+    def cancel(self, inc_id: str, by: str = "person", message: str | None = None) -> dict:
         """The person said they're OK (button, gesture, voice...)."""
         with self.lock:
             inc = self._get(inc_id)
@@ -570,8 +614,8 @@ class IncidentManager:
             self._stop_timer(inc)
             inc.status = "cancelled"
             record(inc, "cancelled", by=by)
-            msg = (f"They indicated they are OK. No action needed.\nWhere: {inc.where()}\n"
-                   f"Incident {inc.id}")
+            msg = (f"{message or 'They indicated they are OK. No action needed.'}\n"
+                   f"Where: {inc.where()}\nIncident {inc.id}")
             if not was_pending:
                 msg += "\nYou may still want to check in with them."
             self._notify_all(inc, f"Cancelled: {inc.spec['title'].split(' - ')[0].title()} in {inc.room}",
@@ -582,10 +626,11 @@ class IncidentManager:
     def acknowledge(self, inc_id: str, by: str = "caregiver") -> dict:
         with self.lock:
             inc = self._get(inc_id)
-            if inc.status not in ACTIVE:
+            if inc.status not in ACTIVE and inc.status != "recovered":
                 return {"status": inc.status, "incident_id": inc.id}
             self._stop_timer(inc)
-            inc.status = "acknowledged"
+            if inc.status != "recovered":  # a recovered incident stays recovered (and reviewable)
+                inc.status = "acknowledged"
             inc.acked_by = by
             record(inc, "acknowledged", by=by)
             self._notify_all(inc, f"Caregiver responding: {inc.room}",
@@ -607,6 +652,77 @@ class IncidentManager:
                                  priority=2, tags=["heavy_check_mark"])
             self._request_review(inc)
             return {"status": inc.status, "incident_id": inc.id}
+
+    # ---- detector follow-ups (linked to the original fall) ---------------
+    def _linked(self, event_id: str) -> Incident | None:
+        inc_id = self.by_event_id.get(str(event_id))
+        return self.incidents.get(inc_id) if inc_id else None
+
+    def _handle_recovery(self, evt: dict) -> dict:
+        """The detector saw the person stand back up after a fall."""
+        inc = self._linked(evt.get("related_event_id", ""))
+        if not inc:
+            log.info("recovery for unknown fall %s ignored", evt.get("related_event_id"))
+            return {"status": "ignored", "reason": "unknown fall"}
+        secs = (evt.get("metrics") or {}).get("recovery_seconds")
+        got_up = f"SafeStep saw them get back up {secs:.0f}s after the fall." if isinstance(
+            secs, (int, float)) else "SafeStep saw them get back up."
+        first = inc.recovered_at is None
+        if first:
+            inc.recovered_at = datetime.now(timezone.utc).isoformat()
+
+        if inc.status == "pending_confirmation":
+            # Inside the countdown: cancel, so the urgent alert never goes out.
+            # Runs under the same lock as the countdown timer, which re-checks
+            # the status, so the alert can't slip out after this point.
+            record(inc, "recovered", by=DETECTOR, raw_event=evt.get("source_payload", evt))
+            self.cancel(inc.id, by=DETECTOR, message=f"{got_up} The urgent alert was not sent.")
+        elif inc.status in ("alerted", "escalated"):
+            # The urgent alert is already out: can't un-send it, so update it.
+            self._stop_timer(inc)
+            inc.status = "recovered"
+            record(inc, "recovered", by=DETECTOR, raw_event=evt.get("source_payload", evt))
+            self._notify_all(inc, f"Update: they got back up ({inc.room})",
+                             f"{got_up} Reminders have stopped.\nThey may still be hurt, so please "
+                             f"check in with them.\nWhere: {inc.where()}\nIncident {inc.id}",
+                             priority=4, tags=["white_check_mark", "standing_person"])
+            self._request_review(inc)
+        elif first:
+            # Acknowledged (someone is on the way) or already closed: just record it,
+            # and tell a responding caregiver what changed.
+            record(inc, "recovered", by=DETECTOR, raw_event=evt.get("source_payload", evt))
+            if inc.status == "acknowledged":
+                self._notify_all(inc, f"Update: they got back up ({inc.room})",
+                                 f"{got_up}\nIncident {inc.id}", priority=3, tags=["standing_person"])
+        return {"status": inc.status, "incident_id": inc.id}
+
+    def _handle_linked_immobility(self, inc: Incident, evt: dict) -> dict:
+        """Still on the floor after the fall: escalate THAT incident, once."""
+        if inc.immobility_reported_at:
+            return {"status": "duplicate", "incident_id": inc.id}
+        inc.immobility_seconds = evt.get("immobility_seconds")
+        inc.immobility_reported_at = datetime.now(timezone.utc).isoformat()
+        record(inc, "immobility", by=DETECTOR, raw_event=evt.get("source_payload", evt))
+        title = CATALOG["immobility"]["title"]
+        headline = f"STILL ON THE FLOOR. {evt.get('details') or ''}".strip()
+
+        if inc.status in ("pending_confirmation", "cancelled"):
+            # Not alerted yet, or the alert was cancelled but they still aren't
+            # moving: send the urgent alert now (escalation starts as usual).
+            self._stop_timer(inc)
+            if inc.status == "cancelled":
+                headline += " The earlier alert was cancelled, but they have not moved since."
+            self._fire(inc, headline=headline)
+        else:
+            priority = 5 if inc.status in ("alerted", "escalated") else 4
+            self._notify(inc, "immobility", CFG["ntfy_topic"], f"{title} ({inc.room})", inc.body(headline),
+                         priority=priority, tags=CATALOG["immobility"]["tags"],
+                         actions=inc.actions(), click=inc.map_link())
+            if inc.escalations and CFG["ntfy_escalation_topic"]:
+                self._notify(inc, "immobility_backup", CFG["ntfy_escalation_topic"], f"{title} ({inc.room})",
+                             inc.body(headline), priority=priority, tags=CATALOG["immobility"]["tags"],
+                             actions=inc.actions(), click=inc.map_link())
+        return {"status": inc.status, "incident_id": inc.id}
 
     def _request_review(self, inc: Incident) -> None:
         if inc.type not in ("fall", "near_fall"):
@@ -639,7 +755,7 @@ class IncidentManager:
             inc = self._get_for_review(inc_id)
             if inc.type not in ("fall", "near_fall"):
                 raise ValueError("only fall and near_fall incidents can be reviewed")
-            if inc.status not in ("cancelled", "resolved"):
+            if inc.status not in CLOSED:
                 raise ValueError("cancel or resolve the incident before reviewing it")
             if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
                 previous = (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at)
@@ -673,7 +789,7 @@ class IncidentManager:
                         continue
                     if isinstance(row, dict) and row.get("incident_id") == key:
                         last = row
-        if not last or last.get("status") not in ("cancelled", "resolved"):
+        if not last or last.get("status") not in CLOSED:
             raise KeyError(f"unknown closed incident {inc_id}")
         inc = Incident(last, dict(CATALOG.get(last["type"], GENERIC_HAZARD)))
         for field in inc.to_dict():
@@ -690,16 +806,31 @@ class IncidentManager:
         return inc
 
     # ---- camera heartbeat watchdog --------------------------------------
-    def heartbeat(self, camera_id: str, room: str | None) -> None:
+    def heartbeat(self, camera_id: str, room: str | None, status: str = "running",
+                  fps: float | None = None, reason: str | None = None) -> None:
+        if status not in ("running", "stopped"):
+            raise ValueError("status must be 'running' or 'stopped'")
         with self.lock:
             hb = self.heartbeats.get(camera_id)
+            room = room or (hb or {}).get("room") or "Unknown room"
+            if status == "stopped":
+                # Clean shutdown: say so now instead of waiting for the timeout.
+                # Already offline -> nothing new to report (no duplicate alert).
+                if hb and hb["offline"]:
+                    return
+                self.heartbeats[camera_id] = {"t": time.time(), "room": room, "offline": True,
+                                              "fps": None, "status": "stopped"}
+                self.last_hazard.pop(("camera_offline", room), None)
+                self.handle_event({"type": "camera_offline", "room": room, "camera_id": camera_id,
+                                   "details": f"The detector was shut down ({reason or 'no reason given'})."})
+                return
             if hb and hb["offline"]:
-                publish_async(CFG["ntfy_topic"], f"SafeStep camera back online ({hb['room']})",
+                publish_async(CFG["ntfy_topic"], f"SafeStep camera back online ({room})",
                               f"Camera {camera_id} is monitoring again.", priority=2,
                               tags=["white_check_mark", "camera"])
                 log.info("camera %s back online", camera_id)
-            self.heartbeats[camera_id] = {"t": time.time(), "room": room or (hb or {}).get("room") or "Unknown room",
-                                          "offline": False}
+            self.heartbeats[camera_id] = {"t": time.time(), "room": room, "offline": False,
+                                          "fps": fps, "status": "running"}
 
     def _check_cameras(self) -> None:
         now = time.time()
@@ -830,7 +961,8 @@ class Handler(BaseHTTPRequestHandler):
             elif not isinstance(body, dict):
                 raise ValueError("body must be a JSON object")
             elif path == "/heartbeat":
-                MANAGER.heartbeat(body.get("camera_id", "cam-1"), body.get("room"))
+                MANAGER.heartbeat(body.get("camera_id", "cam-1"), body.get("room"),
+                                  body.get("status") or "running", body.get("fps"), body.get("reason"))
                 self._send(200, {"ok": True})
             elif path.startswith("/incidents/"):
                 _, _, inc_id, action = (path.split("/") + [""])[:4]

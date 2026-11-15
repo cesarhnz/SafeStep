@@ -24,13 +24,30 @@ Use `python alert_service.py --dry-run` to print notifications instead of sendin
 | `immobility` (still on floor) | URGENT | Immediate, escalates |
 | `near_fall`, `night_wandering`, `inactivity` | High (4) | Potential danger, 5-min cooldown per room |
 | `obstacle`, `low_light`, any custom type | Default (3) | Potential danger, cooldown |
-| `camera_offline` | High | Automatic when heartbeats stop |
+| `camera_offline` | High | Automatic when heartbeats stop for `heartbeat_timeout_s`, or immediately when the detector reports a clean shutdown. One alert per outage, plus a "back online" note when heartbeats resume. |
 
-Every alert says **who, where (room + zone + camera), when, confidence, details, and numbered "What to do" steps**.
+Every alert says **who, where (room + zone + camera), when, fall evidence, details, and numbered "What to do" steps**. The evidence line reads e.g. `Fall evidence: high (score 0.78 of 1; a detection score, not a probability)`. It uses the same bands as the dashboard: low < 0.50, medium < 0.70, high < 0.85, very high.
+
+### Detector follow-ups (linked to the original fall)
+The SafeStep detector sends follow-ups with `related_event_id` set to the fall's `event_id`, so they update that incident instead of opening a new one:
+
+| Follow-up | Incident was… | What happens |
+|---|---|---|
+| `recovered` (person stood up) | in the countdown | Cancelled by `SafeStep detector`; the urgent alert is never sent (the countdown timer re-checks status under the same lock) |
+| | alerted / escalated | Status `recovered`; reminders stop; caregiver gets "Update: they got back up" and the review prompt |
+| | acknowledged | Status unchanged; the responding caregiver is told they got up |
+| `immobility` (still on the floor) | in the countdown | Urgent alert sent immediately; escalation starts |
+| | alerted / escalated | Urgent "PERSON STILL ON THE FLOOR" update on the same incident; escalation continues |
+| | cancelled by the person | Re-opened as an urgent alert ("cancelled, but they have not moved since") |
+| | acknowledged / closed | Update notification only |
+
+Each incident gets at most one immobility follow-up. A `recovered` event for an unknown fall (e.g. after a service restart) is ignored. An `immobility` event for an unknown fall still alerts, as its own incident. `recovered` counts as a closed status: it can be reviewed, acknowledged and resolved.
 
 ## Hooking up your detector
 
-The integrated `safestep` command posts the agreed event schema directly to `/events` when it confirms a fall. It sends `event_type: "possible_fall"`, which the service maps to its urgent `fall` workflow. The detector keeps `metrics` nested; the service includes them in lifecycle JSONL rows for Databricks. Network calls run on a background thread so a slow alert service does not stall camera processing.
+The integrated `safestep` command (see the [root README](../README.md)) posts the agreed event schema to `/events`: `possible_fall`, then `immobility` and/or `recovered` with `related_event_id`. Events go through one background worker in order, with retries (repeated `event_id`s are ignored, so retries are safe). It also sends heartbeats from its frame loop, and `status: "stopped"` on exit. Raw `metrics` go to the lifecycle log for Databricks; caregivers only see the plain-language `details`.
+
+The legacy client below is still supported (the simulator uses it):
 
 ```python
 from safestep_client import SafeStepClient
@@ -50,10 +67,12 @@ Calls have a 3s timeout and never raise, so the CV loop can't crash on alerts.
 
 Raw HTTP, if your engine isn't Python:
 ```
-POST /events          {"type":"fall","room":"Bedroom","zone":"by bed","confidence":0.9,
-                       "person":"Maria","details":"...","lat":..,"lng":..,"snapshot_url":".."}
+POST /events          {"event_id":"evt_1","device_id":"cam-1","room":"Bedroom","timestamp":"2026-11-15T10:00:00Z",
+                       "event_type":"possible_fall","confidence":0.78,"person_detected":true,"details":"..."}
+POST /events          {..., "event_id":"evt_1_recovered","event_type":"recovered","related_event_id":"evt_1"}
 POST /incidents/<id>/cancel | ack | resolve   {"by":"...","outcome":"..."}
-POST /heartbeat       {"camera_id":"cam-1","room":"Bedroom"}
+POST /heartbeat       {"camera_id":"cam-1","room":"Bedroom","status":"running","fps":29.5}
+POST /heartbeat       {"camera_id":"cam-1","room":"Bedroom","status":"stopped","reason":"stopped by user"}
 GET  /incidents       GET /health
 ```
 
@@ -64,7 +83,7 @@ The **I'm on my way** button posts `ack <ID>` to `<topic>-ack` on ntfy, and the 
 `home_name`, `ntfy_server`, `ntfy_topic`, `ntfy_escalation_topic` (backup caregiver), `ntfy_token` (for a private ntfy server), `api_key` (require `X-API-Key` from the engine), `confirm_window_s` (30), `escalate_after_s` (120), `max_escalations` (3), `hazard_cooldown_s` (300), `heartbeat_timeout_s` (60), `port` (8080).
 
 ## Databricks
-`data/events.jsonl` gets one row per lifecycle step (`detected`, `alerted`, `escalated`, `acknowledged`, `cancelled`, `resolved`) with room, type, confidence and timestamps. Point Auto Loader at it, or upload it, for the trends dashboard (falls by room/time, false-alarm rate, time-to-acknowledge).
+`data/events.jsonl` gets one row per lifecycle step (`detected`, `alerted`, `escalated`, `acknowledged`, `cancelled`, `resolved`, plus detector follow-ups `recovered` and `immobility`) with room, type, confidence and timestamps. Point Auto Loader at it, or upload it, for the trends dashboard (falls by room/time, false-alarm rate, time-to-acknowledge).
 
 ## Notes
 - Anyone who knows an ntfy.sh topic name can read it. Keep the random name or self-host ntfy with a token.

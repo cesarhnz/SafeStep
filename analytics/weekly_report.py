@@ -126,9 +126,9 @@ WHERE `timestamp` >= CAST(:start AS TIMESTAMP) AND `timestamp` < CAST(:end AS TI
 GROUP BY 1 ORDER BY detections DESC, room LIMIT 3
 """
 BACKLOG_SQL = """
-SELECT COUNT(CASE WHEN alerted_at IS NOT NULL AND NOT alert_sent AND status NOT IN ('cancelled','resolved') THEN 1 END) AS unaccepted,
-       COUNT(CASE WHEN alerted_at IS NOT NULL AND acknowledged_at IS NULL AND status NOT IN ('cancelled','resolved') THEN 1 END) AS unanswered,
-       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND status IN ('cancelled','resolved') AND review_outcome IS NULL THEN 1 END) AS reviews,
+SELECT COUNT(CASE WHEN alerted_at IS NOT NULL AND NOT alert_sent AND status NOT IN ('cancelled','resolved','recovered') THEN 1 END) AS unaccepted,
+       COUNT(CASE WHEN alerted_at IS NOT NULL AND acknowledged_at IS NULL AND status NOT IN ('cancelled','resolved','recovered') THEN 1 END) AS unanswered,
+       COUNT(CASE WHEN event_type IN ('fall','near_fall') AND status IN ('cancelled','resolved','recovered') AND review_outcome IS NULL THEN 1 END) AS reviews,
        COUNT(CASE WHEN `timestamp` IS NULL THEN 1 END) AS missing_timestamp
 FROM {namespace}.incidents
 """

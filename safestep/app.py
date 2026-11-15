@@ -6,9 +6,12 @@ Teammates: the easiest way to hook in (countdown, alerts, dashboard) is the
     from safestep import monitor
 
     for result in monitor(source=0):
-        for event in result.events:          # FallEvent: "fall" / "recovered"
+        for event in result.events:          # FallEvent: "fall" / "immobility" / "recovered"
             send_alert(event.to_dict(), snapshot=result.frame)
         show_on_dashboard(result.annotated)  # BGR numpy image with skeletons
+
+`main()` (the `safestep` command) already does this for the SafeStep alert
+service: it posts every event in the agreed schema and sends heartbeats.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ import numpy as np
 from .detector import FallConfig, FallDetector, FallEvent
 from .draw import draw_overlay
 from .events import to_schema_event
-from .alerts import send_event_async
+from .alerts import AlertClient
 from .pose import Person, PoseEstimator
 
 
@@ -123,13 +126,18 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--alert-url", default=os.getenv("SAFESTEP_ALERT_URL", "http://127.0.0.1:8080"),
                     help="base URL of alerts/alert_service.py")
     ap.add_argument("--no-alerts", action="store_true", help="do not POST events to the alert service")
+    ap.add_argument("--heartbeat", type=float, default=15.0,
+                    help="seconds between heartbeats to the alert service")
+    ap.add_argument("--immobility", type=float, default=FallConfig.immobility_s,
+                    help="seconds lying without meaningful movement before a 'still on the floor' event")
     ap.add_argument("--descent", type=float, default=FallConfig.descent_threshold,
                     help="hip drop (torso lengths) that counts as a rapid fall")
     ap.add_argument("--lying-angle", type=float, default=FallConfig.lying_angle_deg,
                     help="torso angle from vertical (deg) that counts as lying")
     args = ap.parse_args(argv)
 
-    cfg = FallConfig(descent_threshold=args.descent, lying_angle_deg=args.lying_angle)
+    cfg = FallConfig(descent_threshold=args.descent, lying_angle_deg=args.lying_angle,
+                     immobility_s=args.immobility)
     estimator = PoseEstimator(model=args.model, imgsz=args.imgsz, device=args.device)
     detector = FallDetector(cfg)
 
@@ -145,6 +153,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.events:
         Path(args.events).parent.mkdir(parents=True, exist_ok=True)
         events_file = open(args.events, "a")
+    client = None if args.no_alerts else AlertClient(
+        args.alert_url, args.device_id, args.room, heartbeat_s=args.heartbeat)
+    stop_reason = "video source ended"
 
     print("SafeStep running. Press q or Esc in the window to quit.", file=sys.stderr)
     try:
@@ -156,8 +167,10 @@ def main(argv: list[str] | None = None) -> None:
                 if events_file:
                     events_file.write(line + "\n")
                     events_file.flush()
-                if ev.type == "fall" and not args.no_alerts:
-                    send_event_async(args.alert_url, event)
+                if client:
+                    client.send(event)
+            if client:
+                client.heartbeat(r.fps)  # only sent while frames are actually being processed
 
             if args.save:
                 frames_seen += 1
@@ -173,10 +186,16 @@ def main(argv: list[str] | None = None) -> None:
             if not args.no_show:
                 cv2.imshow("SafeStep", r.annotated)
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                    stop_reason = "stopped by user"
                     break
     except KeyboardInterrupt:
-        pass
+        stop_reason = "stopped by user"
+    except Exception as exc:
+        stop_reason = f"detector error: {type(exc).__name__}"
+        raise
     finally:
+        if client:
+            client.close(stop_reason)
         if writer:
             writer.release()
         if events_file:

@@ -36,7 +36,7 @@ SELECT * FROM your_catalog.safestep.incidents ORDER BY timestamp DESC LIMIT 20;
 
 Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; a hosted dashboard is not provisioned. Dry-run alert delivery is simulated, so use a separate schema for demo data.
 
-The detector's event payload carries the supplied nested `metrics`, `notification`, and `review` objects. The existing lifecycle table retains the complete event in its `raw` JSON column. The table and incident view schemas remain unchanged; notification delivery and acknowledgement fields continue to be derived by the existing view from lifecycle rows.
+The detector's `metrics` (drop, peak drop speed, recovery time, etc.) are kept in the lifecycle table's `raw` JSON column under `raw_event.metrics`; the table schema is unchanged. `confidence` is the detector's fall evidence score (heuristic, 0–1, not a probability). Detector follow-ups add lifecycle rows `recovered` and `immobility`. The incident view exposes them as `recovered_at` and `immobility_reported_at`, and `recovered` is a closed status alongside `cancelled` and `resolved`. Re-run `python analytics/ingest.py --init` (inspect `--dry-run` first) to apply the updated view; the dashboard and weekly report treat `recovered` as closed. Caregiver reviews use the existing `review_outcome` fields; the detector no longer sends its own `review` object.
 
 ## Recovery and operation
 
