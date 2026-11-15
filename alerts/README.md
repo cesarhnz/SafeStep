@@ -19,7 +19,7 @@ Use `python alert_service.py --dry-run` to print notifications instead of sendin
 ## What the caregiver gets
 | Event `type` | Priority | Behaviour |
 |---|---|---|
-| `fall_detected` | URGENT (5) | Heads-up right away, then `confirm_window_s` (30s) for the person to cancel. If not cancelled → urgent alert with **I'm on my way / Call 911 / Map** buttons. No ack in `escalate_after_s` → reminders + backup caregiver topic. |
+| `fall_detected` | URGENT (5) | Heads-up right away, then `confirm_window_s` (7s) for the person to cancel. If not cancelled → urgent alert with **I'm on my way / Call 911 / Map** buttons. No ack in `escalate_after_s` → reminders + backup caregiver topic. |
 | `help_request` | URGENT | Immediate, escalates |
 | `immobility` (still on floor) | URGENT | Immediate, escalates |
 | `near_fall`, `night_wandering`, `inactivity` | High (4) | Potential danger, 5-min cooldown per room |
@@ -79,7 +79,7 @@ GET  /incidents       GET /health
 The **I'm on my way** button posts `ack <ID>` to `<topic>-ack` on ntfy, and the service listens there. So the phone does **not** need to reach the service (no port forwarding). Caregivers can also type `ack <ID>` or `resolve <ID> <outcome>` into that topic.
 
 ## Config (`config.json`)
-`home_name`, `ntfy_server`, `ntfy_topic`, `ntfy_escalation_topic` (backup caregiver), `ntfy_token` (for a private ntfy server), `api_key` (require `X-API-Key` from the engine), `confirm_window_s` (30), `escalate_after_s` (120), `max_escalations` (3), `hazard_cooldown_s` (300), `heartbeat_timeout_s` (60), `port` (8080).
+`home_name`, `ntfy_server`, `ntfy_topic`, `ntfy_escalation_topic` (backup caregiver), `ntfy_token` (for a private ntfy server), `api_key` (require `X-API-Key` from the engine), `confirm_window_s` (7), `escalate_after_s` (120), `max_escalations` (3), `hazard_cooldown_s` (300), `heartbeat_timeout_s` (60), `port` (8080).
 
 ## Databricks
 `data/events.jsonl` gets one row per lifecycle step (`detected`, `alerted`, `escalated`, `acknowledged`, `cancelled`, `resolved`, plus detector follow-ups `recovered` and `immobility`) with room, type, confidence and timestamps. Run the repository’s [analytics shipper](../analytics/README.md) to populate the lifecycle table and incident view for dashboard trends. Cancellation rate is not a verified false-alarm rate.

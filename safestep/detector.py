@@ -198,6 +198,13 @@ class FallDetector:
             return None
         return max(0.0, self.now - tr.still_since)
 
+    def time_on_floor_seconds(self, track_id: int) -> float | None:
+        """For a FALLEN person: elapsed time since the detector observed the fall start."""
+        tr = self.tracks.get(track_id)
+        if not tr or tr.phase is not Phase.FALLEN or tr.fall_start_t is None:
+            return None
+        return max(0.0, self.now - tr.fall_start_t)
+
     @property
     def fallen_ids(self) -> list[int]:
         return [i for i, tr in self.tracks.items() if tr.phase is Phase.FALLEN]

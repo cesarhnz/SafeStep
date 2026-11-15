@@ -196,9 +196,15 @@ def main(argv: list[str] | None = None) -> None:
 
                 if now - last_diagnostic >= 5.0:
                     ids = sorted(visible)
+                    fallen = [
+                        f"{track_id}:{detector.time_on_floor_seconds(track_id):.1f}s"
+                        for track_id in r.fallen_ids
+                        if detector.time_on_floor_seconds(track_id) is not None
+                    ]
                     print(
                         f"[safestep] camera active: fps={r.fps:.1f} "
-                        f"visible_skeletons={len(ids)} track_ids={ids}",
+                        f"visible_skeletons={len(ids)} track_ids={ids} "
+                        f"fallen_time_on_floor={fallen or 'none'}",
                         file=sys.stderr,
                         flush=True,
                     )

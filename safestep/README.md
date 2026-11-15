@@ -22,7 +22,7 @@ uv run safestep --help
 | `--width`, `--height` | Webcam request: 1280 × 720 |
 | `--privacy` | Skeleton-only annotation; original frame remains in memory |
 | `--no-show` | Disable the preview window |
-| `--diagnostics` | Log tracked-person arrivals/departures and periodic FPS/visible-track status to stderr |
+| `--diagnostics` | Log tracked-person arrivals/departures and periodic FPS/visible-track status, including each fallen track's time on the floor, to stderr |
 | `--save` | Optional annotated-video output path |
 | `--events` | Optional append-only JSONL detector event output (not the service lifecycle log) |
 | `--no-alerts` | Disable event posting and heartbeats |
