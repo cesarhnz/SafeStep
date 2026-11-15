@@ -37,7 +37,7 @@ class ReviewTests(unittest.TestCase):
             result = to_internal({'type': name, 'room': 'Bedroom', 'confidence': .9})
             self.assertEqual(result, {'type': 'fall_detected', 'room': 'Bedroom', 'confidence': .9})
         self.assertTrue(service.CATALOG['fall_detected']['confirm'])
-        self.assertEqual(service.DEFAULT_CONFIG['confirm_window_s'], 30)
+        self.assertEqual(service.DEFAULT_CONFIG['confirm_window_s'], 10)
 
     def test_detector_contract_keeps_fields_for_each_fall_name(self):
         from contracts import to_internal
@@ -61,7 +61,7 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(response['status'], 'pending_confirmation')
             incident = self.manager.incidents[response['incident_id']]
             self.assertEqual(incident.type, 'fall_detected')
-            self.assertEqual(timer.call_args.args[0], 30)
+            self.assertEqual(timer.call_args.args[0], 10)
             notify.assert_not_called()
             self.assertEqual(self.request(payload, path='/events')[1]['status'], 'duplicate')
             self.manager._confirm_timeout(incident.id)

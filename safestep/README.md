@@ -7,6 +7,8 @@ The active detector implementation is this package. It combines YOLO pose estima
 ```sh
 uv sync
 uv run safestep --source 0 --device-id uno_q_01 --room "Living room"
+# Headless tracking diagnostics: logs skeleton arrivals/departures and FPS/status.
+uv run safestep --source /dev/video2 --no-show --diagnostics
 # Offline processing: no alert-service calls, heartbeats, or preview window.
 uv run safestep --source clip.mp4 --no-alerts --no-show --events logs/detector-events.jsonl
 uv run safestep --help
@@ -20,6 +22,7 @@ uv run safestep --help
 | `--width`, `--height` | Webcam request: 1280 × 720 |
 | `--privacy` | Skeleton-only annotation; original frame remains in memory |
 | `--no-show` | Disable the preview window |
+| `--diagnostics` | Log tracked-person arrivals/departures and periodic FPS/visible-track status, including each fallen track's time on the floor, to stderr |
 | `--save` | Optional annotated-video output path |
 | `--events` | Optional append-only JSONL detector event output (not the service lifecycle log) |
 | `--no-alerts` | Disable event posting and heartbeats |
@@ -53,5 +56,23 @@ for result in monitor(source=0, privacy=True):
 ```
 
 `monitor()` yields original and annotated frames, tracked people, events, fallen IDs, source-relative timestamp and measured FPS. It does not itself send alerts; the CLI wires event serialization and the HTTP worker together. `events.py` converts detector `FallEvent` objects into the agreed HTTP schema.
+
+## NCNN model on Arduino Uno Q
+
+SafeStep accepts Ultralytics-exported model directories through `--model`. To export the pose checkpoint at 320 × 320 in NCNN format, run this from the repository root (Ultralytics may install its export dependencies on the first run):
+
+```sh
+uv run yolo export model=yolo26n-pose.pt format=ncnn imgsz=320
+```
+
+Ultralytics creates `yolo26n-pose_ncnn_model/`. Use that directory for inference and pass the matching input size explicitly:
+
+```sh
+uv run safestep --model yolo26n-pose_ncnn_model --imgsz 320 \
+  --source /dev/video2 --no-show --diagnostics --width 640 --height 360 \
+  --device-id uno_q_01 --room "Living room"
+```
+
+The NCNN export keeps the same pose task and can run on the CPU; export support alone does not guarantee faster inference on the Uno Q, so compare the reported FPS and skeleton stability with the PyTorch model. See the [Ultralytics NCNN export guide](https://docs.ultralytics.com/integrations/ncnn/) for export options.
 
 Synthetic-pose and local HTTP integration tests live in `../tests/`. Real camera accuracy, occlusion behavior and inference performance require representative recordings or hardware checks.

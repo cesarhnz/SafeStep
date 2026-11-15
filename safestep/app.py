@@ -47,18 +47,28 @@ class FrameResult:
 
 
 def open_source(source: str | int, width: int | None = None, height: int | None = None) -> cv2.VideoCapture:
+    source_path = Path(str(source))
+    is_device_path = (
+        source_path.parent == Path("/dev")
+        and source_path.name.startswith("video")
+        and source_path.name[5:].isdigit()
+    )
     if isinstance(source, int) or str(source).isdigit():
         backend = cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY
         cap = cv2.VideoCapture(int(source), backend)
-        # MJPG gives much higher frame rates than raw YUYV on most USB webcams
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        if width and height:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    elif is_device_path:
+        backend = cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY
+        cap = cv2.VideoCapture(str(source_path), backend)
     else:
         if not Path(source).exists():
             raise FileNotFoundError(source)
         cap = cv2.VideoCapture(str(source))
+    if isinstance(source, int) or str(source).isdigit() or is_device_path:
+        # MJPG gives higher frame rates than raw YUYV on most USB webcams.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        if width and height:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video source {source!r}")
     return cap
@@ -117,6 +127,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--height", type=int, default=720, help="webcam capture height")
     ap.add_argument("--privacy", action="store_true", help="show skeletons only, no camera image")
     ap.add_argument("--no-show", action="store_true", help="don't open a preview window")
+    ap.add_argument("--diagnostics", action="store_true",
+                    help="log tracked-person arrivals, departures, and periodic frame status")
     ap.add_argument("--save", help="write the annotated video to this path (e.g. output/demo.mp4)")
     ap.add_argument("--events", help="append events as JSON lines to this file")
     ap.add_argument("--device-id", default=os.getenv("SAFESTEP_DEVICE_ID", "uno_q_01"),
@@ -156,10 +168,48 @@ def main(argv: list[str] | None = None) -> None:
     client = None if args.no_alerts else AlertClient(
         args.alert_url, args.device_id, args.room, heartbeat_s=args.heartbeat)
     stop_reason = "video source ended"
+    active_tracks: dict[int, tuple[float, float, list[float]]] = {}
+    last_diagnostic = time.monotonic()
 
     print("SafeStep running. Press q or Esc in the window to quit.", file=sys.stderr)
     try:
         for r in monitor(args.source, estimator, detector, args.privacy, args.width, args.height):
+            if args.diagnostics:
+                now = time.monotonic()
+                visible = {p.track_id: p for p in r.people}
+                for track_id, (last_seen, _, _) in list(active_tracks.items()):
+                    if track_id not in visible and now - last_seen >= 1.0:
+                        print(f"[safestep] skeleton lost: track_id={track_id}",
+                              file=sys.stderr, flush=True)
+                        del active_tracks[track_id]
+
+                for track_id, person in visible.items():
+                    if track_id not in active_tracks:
+                        bbox = [round(float(v)) for v in person.bbox]
+                        print(
+                            f"[safestep] skeleton acquired: track_id={track_id} "
+                            f"confidence={person.score:.2f} bbox={bbox}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    active_tracks[track_id] = (now, person.score, person.bbox.tolist())
+
+                if now - last_diagnostic >= 5.0:
+                    ids = sorted(visible)
+                    fallen = [
+                        f"{track_id}:{detector.time_on_floor_seconds(track_id):.1f}s"
+                        for track_id in r.fallen_ids
+                        if detector.time_on_floor_seconds(track_id) is not None
+                    ]
+                    print(
+                        f"[safestep] camera active: fps={r.fps:.1f} "
+                        f"visible_skeletons={len(ids)} track_ids={ids} "
+                        f"fallen_time_on_floor={fallen or 'none'}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    last_diagnostic = now
+
             for ev in r.events:
                 event = to_schema_event(ev, args.device_id, args.room)
                 line = json.dumps(event)

@@ -50,7 +50,7 @@ The service owns status, delivery state and caregiver review outcomes. Detector-
 
 | Input or transition | Result |
 | --- | --- |
-| Initial fall | Heads-up notification and a confirmation countdown (default 30 seconds) |
+| Initial fall | Heads-up notification and a confirmation countdown (default 10 seconds) |
 | Countdown expires | Urgent alert; reminder timer starts |
 | Recovery during countdown | Cancel pending alert and request a caregiver review |
 | Recovery after urgent alert | Mark `recovered`, stop reminders, notify caregivers and request review |

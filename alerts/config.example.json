@@ -8,7 +8,7 @@
   "host": "0.0.0.0",
   "port": 8080,
   "api_key": "",
-  "confirm_window_s": 30,
+  "confirm_window_s": 10,
   "escalate_after_s": 120,
   "max_escalations": 3,
   "hazard_cooldown_s": 300,
