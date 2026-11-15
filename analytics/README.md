@@ -34,7 +34,7 @@ SELECT lifecycle, COUNT(*) FROM your_catalog.safestep.lifecycle_events GROUP BY 
 SELECT * FROM your_catalog.safestep.incidents ORDER BY timestamp DESC LIMIT 20;
 ```
 
-Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; a hosted dashboard is not provisioned. Dry-run alert delivery is simulated, so use a separate schema for demo data.
+Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; importing/publishing the [dashboard export](dashboard/README.md) is a separate step. Dry-run alert delivery is simulated, so use a separate schema for demo data.
 
 ## Populate a dashboard demo
 
@@ -94,7 +94,7 @@ The SQL connector uses the `certifi` CA bundle for TLS verification. If your net
 
 The view ranks `reviewed` lifecycle rows independently so a later notification delivery row cannot erase a review. Corrected reviews use the newest review row and retain earlier versions in the lifecycle table. The SQL examples in `sql/queries.sql` include outcomes and incidents awaiting review.
 
-Validation: `python3 -m unittest discover -s analytics/tests -v`. Review join behavior is exercised locally with SQLite window functions and a JSON extraction shim; live Databricks SQL and dashboard rendering still require workspace validation.
+Validation: `python3 -m unittest discover -s analytics/tests -v`. Review join behavior is exercised locally with SQLite window functions and a JSON extraction shim. The project owner confirmed the deployed dashboard and email working on November 15, 2026; see the [verification record](../docs/verification.md).
 
 ## Weekly caregiver email
 

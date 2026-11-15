@@ -43,7 +43,7 @@ For initial setup or after changing the dashboard draft, use `--publish`. This s
 
 Open the Job's run history to inspect snapshot generation and email-task success. After a successful run, check the configured inbox and spam folder. A successful Databricks run does not independently prove that Gmail placed the message in the inbox.
 
-The local test suite checks recipient-only settings, custom schedules, native task configuration, replacement of the old custom Job, and the explicit one-time send behavior. The deployed task is also verified through a live Databricks run.
+The local test suite checks recipient-only settings, custom schedules, native task configuration, replacement of the old custom Job, and the explicit one-time send behavior. The project owner confirmed email delivery working on November 15, 2026; see the [verification record](../../docs/verification.md).
 
 ```sh
 python3 -m unittest discover -s analytics/tests -v
