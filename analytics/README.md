@@ -36,7 +36,7 @@ SELECT * FROM your_catalog.safestep.incidents ORDER BY timestamp DESC LIMIT 20;
 
 Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; a hosted dashboard is not provisioned. Dry-run alert delivery is simulated, so use a separate schema for demo data.
 
-The detector's event payload carries the supplied nested `metrics`, `notification`, and `review` objects. The lifecycle table retains those values in its `raw` JSON; the `incidents` view exposes `metrics` and `review` as structs and derives `notification.alert_required`, `notification.alert_sent`, `notification.alert_sent_at`, and `notification.acknowledged_at` from lifecycle rows. Existing Delta tables are not migrated by `--init`; apply the view definition from `sql/schema.sql` if you already initialized an older version.
+The detector's event payload carries the supplied nested `metrics`, `notification`, and `review` objects. The existing lifecycle table retains the complete event in its `raw` JSON column. The table and incident view schemas remain unchanged; notification delivery and acknowledgement fields continue to be derived by the existing view from lifecycle rows.
 
 ## Recovery and operation
 

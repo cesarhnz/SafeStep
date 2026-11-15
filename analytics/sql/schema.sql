@@ -61,16 +61,6 @@ SELECT l.incident_id,
        l.status,                          -- latest lifecycle status
        l.person_detected,
        l.immobility_seconds,
-       from_json(get_json_object(l.raw, '$.metrics'),
-         'torso_angle_deg DOUBLE, vertical_velocity DOUBLE, lateral_velocity DOUBLE, immobility_seconds DOUBLE, recovery_seconds DOUBLE') AS metrics,
-       named_struct(
-         'alert_required', a.alerted_at IS NOT NULL,
-         'alert_sent', a.delivered_at IS NOT NULL,
-         'alert_sent_at', a.delivered_at,
-         'acknowledged_at', a.acknowledged_at
-       ) AS notification,
-       from_json(get_json_object(l.raw, '$.review'),
-         'confirmed_event_type STRING, reviewed_at TIMESTAMP') AS review,
        a.delivered_at IS NOT NULL AS alert_sent,   -- ntfy accepted at least one alert message
        a.had_delivery_failure = 1 AS delivery_failed,
        a.alerted_at,
