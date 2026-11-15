@@ -88,7 +88,7 @@ DEFAULT_CONFIG = {
     "host": "0.0.0.0",
     "port": 8080,
     "api_key": "",                    # if set, the engine must send X-API-Key
-    "confirm_window_s": 7,            # time the person has to cancel a fall alert
+    "confirm_window_s": 10,           # time the person has to cancel a fall alert
     "escalate_after_s": 120,          # no ack in this time -> escalate
     "max_escalations": 3,
     "fall_dedupe_s": 600,             # a repeat fall in the same room within this long is the same incident

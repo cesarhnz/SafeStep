@@ -29,7 +29,7 @@ The first run writes `alerts/config.json` and generates a random topic if none i
 | `ntfy_token` | Optional server authentication token |
 | `api_key` | Optional HTTP API key; detector uses `SAFESTEP_ALERT_API_KEY` |
 | `host`, `port` | `0.0.0.0`, `8080`; choose the intended interface |
-| `confirm_window_s` | 7-second cancellation window before the urgent fall alert |
+| `confirm_window_s` | 10-second cancellation window before the urgent fall alert |
 | `escalate_after_s`, `max_escalations` | 120 seconds, three reminders |
 | `fall_dedupe_s` | 600-second recent-fall grouping window |
 | `hazard_cooldown_s` | 300-second repeat-hazard cooldown |
