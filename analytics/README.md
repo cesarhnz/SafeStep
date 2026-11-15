@@ -36,6 +36,38 @@ SELECT * FROM your_catalog.safestep.incidents ORDER BY timestamp DESC LIMIT 20;
 
 Use `sql/queries.sql` to build dashboard tiles, replacing `safestep.` with your configured catalog/schema prefix. These are query definitions; a hosted dashboard is not provisioned. Dry-run alert delivery is simulated, so use a separate schema for demo data.
 
+## Populate a dashboard demo
+
+Generate 100 incidents for **Maria Demo (fictional)** across 28 complete days:
+
+```sh
+python analytics/seed_demo.py --end-date 2026-11-14
+```
+
+Omit `--end-date` to end on yesterday in America/Chicago. The staged weekly incident totals are 37, 28, 21, and 14, with faster caregiver acknowledgment each week. The scenarios cover five rooms, day/night activity, eight event types, cancellations, escalations, simulated delivery failures (including recovered deliveries), and reviewed/unreviewed outcomes. All records carry a `DEMO-MARIA-` incident ID, a demo device ID, and synthetic descriptions. They are illustrative scenarios, not measured patient trends.
+
+The generator writes a separate, ignored `analytics/demo/events.jsonl`; it does not call the alert service or send notifications. With your Databricks environment exported, ingest into the table used by the dashboard:
+
+```sh
+SAFESTEP_EVENT_LOG="$PWD/analytics/demo/events.jsonl" \
+SAFESTEP_CHECKPOINT="$PWD/analytics/demo/maria-20261114.checkpoint" \
+python analytics/ingest.py --once
+```
+
+Use a separate schema for isolated demonstrations, updating the dashboard's source references to match. Loading the active dashboard's table also includes the synthetic records in downstream reports reading that table. No email or report job is triggered by this command.
+
+Refresh the dashboard and select the complete demo date range. Demo entries are identifiable by incident IDs beginning with `DEMO-MARIA-` and device IDs beginning with `demo-maria-`. The 100 incident entries produce 539 lifecycle rows; the incident view collapses them to one row per incident. Repeating the same end date produces identical rows and safely replays through the importer's content-hash MERGE. A different end date creates a new set of incident IDs; it does not replace earlier demo data. Keep the demo checkpoint separate from the live alert log's checkpoint.
+
+To remove this specific demo batch, run the following against the same destination catalog/schema (adjust the date in the ID when appropriate):
+
+```sql
+DELETE FROM workspace.safestep.lifecycle_events
+WHERE incident_id LIKE 'DEMO-MARIA-20261114-%'
+  AND person = 'Maria Demo (fictional)';
+```
+
+If regenerating after removal, also remove that demo batch's local checkpoint so ingestion replays the source.
+
 ## Recovery and operation
 
 Each successful batch advances an atomic JSON checkpoint containing the log identity and destination. Failed SQL batches retain their offset for retry. Replayed rows use a content hash and MERGE; identical rows within a batch are deduplicated. Native parameters are capped at 255, allowing at most 11 rows per batch with the current 23 columns. Default batch size is 10. Input streams one batch at a time, and incomplete trailing lines wait until the next poll. Malformed JSON stops the batch without advancing the checkpoint; repair the source row before restarting.

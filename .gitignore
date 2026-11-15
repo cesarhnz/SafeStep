@@ -113,6 +113,8 @@ alerts/data/
 
 analytics/.env
 analytics/.ingest_offset
+analytics/demo/*.jsonl
+analytics/demo/*.checkpoint
 # Weekly reports contain caregiver addresses and private dashboard aggregates
 analytics/reports/config.json
 analytics/reports/preview.*
