@@ -30,6 +30,7 @@ from datetime import datetime
 REQUIRED = ("event_id", "device_id", "room", "timestamp", "event_type",
             "confidence", "person_detected")
 TYPE_MAP = {"fall": "fall_detected", "possible_fall": "fall_detected"}
+FOLLOW_UP_TYPES = ("immobility", "recovered")
 PASSTHROUGH = ("zone", "person", "snapshot_url", "lat", "lng", "title", "advice")
 
 

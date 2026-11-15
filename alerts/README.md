@@ -112,6 +112,6 @@ Content-Type: application/json
 
 Outcomes are `confirmed_fall`, `no_fall`, or `unsure`. Notes are optional and limited to 2,000 characters; `by` is a non-empty label of at most 200 characters. API reviews inherit the existing API-key configuration. ntfy commands use the shared caregiver topic and record `Caregiver (ntfy)` as the actor, not a verified individual identity. The Python client also exposes `ss.review(incident_id, outcome, note=None, by="caregiver")`.
 
-Only cancelled or resolved fall/near-fall incidents accept reviews. Reviewing never cancels timers or changes incident status. Corrections append `reviewed` lifecycle rows; identical outcome/note/actor submissions are idempotent. The service sends a save receipt to the primary topic. Retain `data/events.jsonl`: closed incidents can be recovered from this log for review after restart. Active incident/timer recovery remains outside this review feature.
+Cancelled, recovered, and resolved fall/near-fall incidents accept reviews. Reviewing never cancels timers or changes incident status. Corrections append `reviewed` lifecycle rows; identical outcome/note/actor submissions are idempotent. The service sends a save receipt to the primary topic. Retain `data/events.jsonl`: closed incidents can be recovered from this log for review after restart. Active incident/timer recovery remains outside this review feature.
 
 Run local review tests with `python3 -m unittest discover -s alerts/tests -v` from the repository root.

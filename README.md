@@ -3,6 +3,7 @@
 Fall monitoring prototype with camera pose detection, caregiver alerts, and Databricks analytics.
 
 - `safestep/`: pose estimation, fall detection, event serialization, and alert-service client
+- [SafeStep local caregiver UI](ui/README.md): Home, About, fall simulation, and real event history
 - [Alert service setup](alerts/README.md)
 - [Databricks integration setup and recovery](analytics/README.md)
 - [Weekly dashboard email and schedule settings](analytics/databricks/README.md)

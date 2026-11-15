@@ -220,6 +220,9 @@ GENERIC_HAZARD = {
     "advice": ["Check on them when you can."],
 }
 
+# Keep the historical name available to clients and integrations.
+CATALOG["fall"] = CATALOG["fall_detected"]
+
 # --------------------------------------------------------------------------
 # Event log (for Databricks ingestion, e.g. Auto Loader on the JSONL file)
 # --------------------------------------------------------------------------
@@ -380,7 +383,7 @@ class Incident:
         if self.confidence is not None:
             try:
                 score = float(self.confidence)
-                label = "Fall evidence" if self.type in ("fall", "immobility") else "Detection score"
+                label = "Fall evidence" if canonical_event_type(self.type) in ("fall_detected", "immobility") else "Detection score"
                 lines.append(f"{label}: {evidence_band(score)} (score {score:.2f} of 1; "
                              "a detection score, not a probability)")
             except (TypeError, ValueError):
@@ -532,7 +535,8 @@ class IncidentManager:
             except Exception:
                 log.exception("[%s] notify crashed (%s)", inc.id, stage)
                 ok = False
-            record(inc, "delivered" if ok else "delivery_failed", stage=stage)
+            record(inc, "delivered" if ok else "delivery_failed", stage=stage,
+                   dry_run=bool(CFG["dry_run"]))
         threading.Thread(target=run, daemon=True).start()
 
     def _confirm_timeout(self, inc_id: str) -> None:
@@ -755,7 +759,7 @@ class IncidentManager:
             inc = self._get_for_review(inc_id)
             if inc.type not in ("fall_detected", "near_fall"):
                 raise ValueError("only fall_detected and near_fall incidents can be reviewed")
-            if inc.status not in ("cancelled", "resolved"):
+            if inc.status not in CLOSED:
                 raise ValueError("cancel or resolve the incident before reviewing it")
             if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
                 previous = (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at)
@@ -946,6 +950,17 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return
             self._send(200, MANAGER.summary())
+        elif path == "/monitoring":
+            if not self._authorized():
+                return
+            # A reachable alert service alone does not mean detection is running.
+            with MANAGER.lock:
+                heartbeats = list(MANAGER.heartbeats.values())
+                now = time.time()
+                active = [hb for hb in heartbeats if not hb["offline"]
+                          and now - hb["t"] <= CFG["heartbeat_timeout_s"]]
+                state = ("active" if len(active) == len(heartbeats) else "offline") if heartbeats else "waiting"
+            self._send(200, {"monitoring": state})
         else:
             self._send(404, {"error": "not found"})
 
