@@ -4,7 +4,7 @@
       "name": "safestep_incidents",
       "displayName": "SafeStep Incidents",
       "config": {
-        "source": "SELECT i.*, r.review_outcome, r.review_note, r.reviewed_by, r.reviewed_at FROM workspace.safestep.incidents i LEFT JOIN (\n  SELECT review_rows.incident_id, review_rows.review_outcome, review_rows.review_note,\n         review_rows.reviewed_by, review_rows.reviewed_at\n  FROM (\n    SELECT incident_id,\n           outcome AS review_outcome,\n           details AS review_note,\n           actor AS reviewed_by,\n           logged_at AS reviewed_at,\n           ROW_NUMBER() OVER (PARTITION BY incident_id ORDER BY logged_at DESC) AS rn\n    FROM workspace.safestep.lifecycle_events\n    WHERE outcome IS NOT NULL\n  ) review_rows\n  WHERE review_rows.rn = 1\n) r ON i.incident_id = r.incident_id",
+        "source": "SELECT * FROM workspace.safestep.incidents",
         "measures": [
           {
             "name": "incidents",
@@ -84,7 +84,7 @@
           }
         ],
         "version": "1.1",
-        "comment": "Incident-level SafeStep metrics, one row per incident derived from the lifecycle log. Fall events use event_type 'fall' and are detections, not confirmed injuries. Caregiver review fields (review_outcome, review_note, reviewed_by, reviewed_at) come from lifecycle rows that carry a non-null outcome; a null review_outcome means no caregiver review has been recorded (unreviewed), which is distinct from 'unsure'. Review outcomes are caregiver-reported observations, not verified clinical findings.",
+        "comment": "Incident-level SafeStep metrics from the incidents view, one row per incident. Fall detections are not confirmed injuries. The latest reviewed lifecycle row supplies caregiver-reported outcomes; NULL means unreviewed, distinct from unsure. Cancellation is not a verified false alarm. Apply the current incident view before importing this dashboard.",
         "dimensions": [
           {
             "name": "incident_id",
