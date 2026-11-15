@@ -1,6 +1,6 @@
 # SafeStep
 
-Fall monitoring prototype with camera pose detection, caregiver alerts, and Databricks analytics.
+SafeStep is a camera-based fall monitoring prototype. It detects rapid drops followed by a lying posture, notifies caregivers through ntfy, and records incident history for a Databricks dashboard and scheduled email snapshots.
 
 - `safestep/`: pose estimation, fall detection, event serialization, and alert-service client
 - [SafeStep local caregiver UI](ui/README.md): Home, About, fall simulation, and real event history
@@ -8,47 +8,75 @@ Fall monitoring prototype with camera pose detection, caregiver alerts, and Data
 - [Databricks integration setup and recovery](analytics/README.md)
 - [Weekly dashboard email and schedule settings](analytics/databricks/README.md)
 
-## Run the detector
+The detector lives in `safestep/`. The obsolete `EdgeDetection/` placeholder has been removed.
 
-Install the Python project with `uv sync`. Start the alert service in another terminal with `python alerts/alert_service.py` (add `--dry-run` to print notifications instead of sending them). Then start detection:
+## System overview
+
+```mermaid
+flowchart LR
+    Camera[Camera or video file] --> Detector[YOLO pose + fall state machine]
+    Detector -->|Events and heartbeats| Alerts[Alert service]
+    Alerts -->|Notifications| Phone[Caregiver ntfy app]
+    Phone -->|Acknowledgements and reviews via ntfy| Alerts
+    Alerts --> Log[Append-only lifecycle log]
+    Log --> Shipper[Analytics shipper]
+    Shipper --> Delta[Databricks table + incident view]
+    Delta --> Dashboard[SafeStep dashboard]
+    Dashboard --> Email[Scheduled Databricks email snapshot]
+```
+
+The alert service operates independently of Databricks. The detector and alert service must remain running for monitoring; the shipper must run for fresh dashboard data. The email job runs in Databricks.
+
+## Documentation
+
+| Guide | Contents |
+| --- | --- |
+| [Architecture and event lifecycle](docs/architecture.md) | Components, payloads, state transitions, persistence, and metric definitions |
+| [Operating guide](docs/operations.md) | Installation, startup, configuration, shutdown, troubleshooting, and tests |
+| [Verification status](docs/verification.md) | User-confirmed deployment status, automated checks, and remaining limits |
+| [Detector](safestep/README.md) | Camera options, thresholds, evidence score, and Python integration |
+| [Alerts](alerts/README.md) | ntfy configuration, HTTP API, acknowledgements, and caregiver reviews |
+| [Analytics](analytics/README.md) | Databricks initialization, ingestion, recovery, and synthetic demo data |
+| [Dashboard](analytics/dashboard/README.md) | Importing, publishing, and dashboard data sources |
+| [Active email delivery](analytics/databricks/README.md) | Native Databricks snapshot job, schedule, and subscribers |
+| [Optional custom digest](analytics/reports/README.md) | HTML/text reports, SMTP delivery, and delivery ledgers |
+
+## Quick start
+
+Use Python 3.10+ and `uv`. From the repository root:
 
 ```sh
+uv sync
+# Terminal 1: print notifications for an initial local check.
+uv run python alerts/alert_service.py --dry-run
+# Terminal 2: process a camera and send events to the local alert service.
 uv run safestep --source 0 --device-id uno_q_01 --room "Living room"
 ```
 
-Useful options: `--immobility 15` (seconds without movement before "still on the floor"; default 60), `--heartbeat 15` (seconds between heartbeats), `--no-alerts` (detect without contacting the alert service), `--privacy` (skeletons only), `--source clip.mp4` (video file). Environment variables: `SAFESTEP_ALERT_URL`, `SAFESTEP_ALERT_API_KEY`, `SAFESTEP_DEVICE_ID`, `SAFESTEP_ROOM`.
+The first alert-service run creates private `alerts/config.json`. Configure the ntfy topic and subscribe on the caregiver's phone, then restart without `--dry-run` for real notifications. Set matching API keys when authentication is enabled. Follow the [operating guide](docs/operations.md) to start analytics and configure email.
 
-## What the detector sends
+For a camera-free alert demo, run `uv run python alerts/simulate_engine.py demo` while the alert service is running. The simulator uses the legacy client and does not automatically read the detector's API-key environment variable.
 
-Each event uses the agreed schema (see `alerts/contracts.py`) and is posted to `/events` in order, with retries:
+## Repository layout
 
-| Detector event | `event_type` | Alert service behaviour |
-|---|---|---|
-| Fast drop, then lying down | `possible_fall` | 30 s countdown, then an urgent alert |
-| Lying without meaningful movement for `--immobility` seconds | `immobility` + `related_event_id` | Escalates the **same** incident once ("still on the floor") |
-| Standing upright again for 1.5 s | `recovered` + `related_event_id` | During the countdown: cancels it, so no urgent alert. After the alert: marks the incident `recovered` and stops reminders. |
-
-- **`confidence`** is the **fall evidence score** (0–1). It combines how far the hips dropped (40%), the peak drop speed (35%) and how horizontal the body ended up (25%). It's a heuristic, not a calibrated probability. Alerts show it as low / medium / high / very high, matching the dashboard's bands. YOLO's person-detection score is kept separately as `metrics.person_detection_score`.
-- **`details`** is a plain-language sentence for caregivers, e.g. *"Rapid drop of 1.5 torso lengths; ended up lying down (88°)."*
-- **`metrics`** holds the raw numbers for analytics (stored in Databricks' `raw` column):
-
-  | Metric | Event | Meaning |
-  |---|---|---|
-  | `drop_torso_lengths` | fall | How far the hips dropped |
-  | `peak_drop_speed` | fall | Fastest downward hip speed during the fall |
-  | `peak_lateral_speed` | fall | Fastest sideways hip speed during the fall |
-  | `torso_angle_deg` | fall | Final torso angle (0° upright, 90° flat) |
-  | `person_detection_score` | fall | YOLO's person-detection confidence |
-  | `time_on_floor_s` | immobility | Time since the fall started |
-  | `recovery_seconds` | recovered | Time from the start of the fall until upright again |
-
-  Speeds and distances are in torso lengths (per second). `immobility_seconds` is only sent once it has actually been measured.
-- **Heartbeats** go to `/heartbeat` every `--heartbeat` seconds, and **only while frames are being processed**. A crash, frozen camera or unplugged camera stops them, and the alert service's watchdog raises "camera offline" after `heartbeat_timeout_s`. A clean shutdown sends `status: "stopped"`, which raises the offline alert immediately, without a second one later.
+| Path | Responsibility |
+| --- | --- |
+| `safestep/` | Camera loop, YOLO pose tracking, fall detection, serialization, HTTP worker, overlays |
+| `alerts/` | Standalone HTTP alert service, ntfy delivery, simulator, legacy client, contract |
+| `analytics/` | Lifecycle ingestion, demo generation, weekly report and deployment scripts |
+| `analytics/sql/` | Delta table, incident view, example dashboard queries |
+| `analytics/dashboard/` | Exported dashboard definition |
+| `analytics/databricks/` | Hosted report notebook and email deployment documentation |
+| `tests/`, `alerts/tests/`, `analytics/tests/` | Detector/integration, alert-service, and analytics tests |
+| `docs/` | System architecture, operating procedures, verification record |
+| `pyproject.toml`, `uv.lock` | Detector dependencies and reproducible project environment |
 
 ## Tests
 
 ```sh
-uv run pytest tests                                   # detector + end-to-end through the alert service
-python3 -m unittest discover -s alerts/tests -v       # alert service
-python3 -m unittest discover -s analytics/tests -v    # analytics, view, weekly report
+uv run pytest tests -q
+python3 -m unittest discover -s alerts/tests -v
+python3 -m unittest discover -s analytics/tests -v
 ```
+
+Detector tests use synthetic poses; they do not establish accuracy on real falls. SafeStep is a research prototype, not a certified emergency system.

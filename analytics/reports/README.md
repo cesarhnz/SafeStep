@@ -94,7 +94,7 @@ Weekly counts are grouped by **detection timestamp**, not notification/review da
 
 Response time is the median between first alert decision and first caregiver acknowledgement with a non-negative duration; sample counts accompany current and previous values. Delivery failures include incidents with any failed attempt even if a retry succeeded. The separate no-alert-accepted count identifies incidents where ntfy has accepted no alert.
 
-Follow-ups use **all dates and current status**: open alerts without acceptance, open alerts without acknowledgement, and closed fall/near-fall detections awaiting review. Closed/cancelled incidents are excluded from the open delivery/response queues. Top rooms include fall and near-fall detections only. Prevention signals are obstacle, low-light, night-wandering, and inactivity detections; near falls have their own headline. Camera-offline counts are episodes, not downtime.
+Follow-ups use **all dates and current status**: open alerts without acceptance, open alerts without acknowledgement, and closed fall/near-fall detections (including detector-recovered incidents) awaiting review. Cancelled, resolved, and recovered incidents are excluded from the open delivery/response queues. Top rooms include fall and near-fall detections only. Prevention signals are obstacle, low-light, night-wandering, and inactivity detections; near falls have their own headline. Camera-offline counts are episodes, not downtime.
 
 A missing/stale lifecycle timestamp triggers a data warning. A quiet event log does not establish monitoring uptime; a zero-count week is worded as “no incidents recorded.” Missing detection timestamps are flagged and excluded from weekly counts. This digest complements immediate alerts.
 

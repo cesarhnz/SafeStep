@@ -7,7 +7,7 @@ The detector sends the team-agreed event shape:
        zone, person, snapshot_url, lat, lng)
 
 event_type values from the SafeStep detector:
-    possible_fall   a fall (mapped to the alert service's `fall` type)
+    possible_fall   a fall (mapped to the alert service's `fall_detected` type)
     immobility      still on the floor; with related_event_id it attaches to that fall
     recovered       the person got back up; requires related_event_id
 
@@ -29,6 +29,7 @@ from datetime import datetime
 
 REQUIRED = ("event_id", "device_id", "room", "timestamp", "event_type",
             "confidence", "person_detected")
+FOLLOW_UP_TYPES = ("immobility", "recovered")
 TYPE_MAP = {"fall": "fall_detected", "possible_fall": "fall_detected"}
 FOLLOW_UP_TYPES = ("immobility", "recovered")
 PASSTHROUGH = ("zone", "person", "snapshot_url", "lat", "lng", "title", "advice")

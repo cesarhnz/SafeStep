@@ -141,7 +141,7 @@ class FollowUpTests(Base):
         time.sleep(0.4)
         inc = self.m.incidents[inc_id]
         self.assertEqual(inc.status, "alerted")
-        self.assertEqual(self.publish.call_args.args[1], service.CATALOG["fall"]["title"])
+        self.assertEqual(self.publish.call_args.args[1], service.CATALOG["fall_detected"]["title"])
         self.assertIsNotNone(inc.timer)
 
     # -- scenario 3: gets up after the urgent alert ---------------------------

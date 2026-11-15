@@ -760,7 +760,7 @@ class IncidentManager:
             if inc.type not in ("fall_detected", "near_fall"):
                 raise ValueError("only fall_detected and near_fall incidents can be reviewed")
             if inc.status not in CLOSED:
-                raise ValueError("cancel or resolve the incident before reviewing it")
+                raise ValueError("cancel, resolve, or wait for recovery before reviewing the incident")
             if (inc.review_outcome, inc.review_note, inc.reviewed_by) != (outcome, note, by.strip()):
                 previous = (inc.review_outcome, inc.review_note, inc.reviewed_by, inc.reviewed_at)
                 inc.review_outcome = outcome

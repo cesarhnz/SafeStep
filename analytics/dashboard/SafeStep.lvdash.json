@@ -79,8 +79,8 @@
           },
           {
             "name": "awaiting_review_incidents",
-            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall_detected', 'near_fall') AND status IN ('cancelled', 'resolved') AND review_outcome IS NULL)",
-            "comment": "Fall or near-fall incidents with status cancelled or resolved that have no recorded caregiver review. A cancellation is not a review outcome and does not mean there was no fall."
+            "expr": "COUNT(DISTINCT incident_id) FILTER (WHERE event_type IN ('fall_detected', 'near_fall') AND status IN ('cancelled', 'resolved', 'recovered') AND review_outcome IS NULL)",
+            "comment": "Fall or near-fall incidents with status cancelled, resolved, or recovered that have no recorded caregiver review. A cancellation is not a review outcome and does not mean there was no fall."
           }
         ],
         "version": "1.1",
@@ -2949,7 +2949,7 @@
             "spec": {
               "frame": {
                 "showTitle": true,
-                "title": "Awaiting caregiver review (fall or near-fall, cancelled or resolved)"
+                "title": "Awaiting caregiver review (fall or near-fall, cancelled, resolved, or recovered)"
               },
               "version": 2,
               "widgetType": "counter",

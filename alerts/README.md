@@ -82,7 +82,7 @@ The **I'm on my way** button posts `ack <ID>` to `<topic>-ack` on ntfy, and the 
 `home_name`, `ntfy_server`, `ntfy_topic`, `ntfy_escalation_topic` (backup caregiver), `ntfy_token` (for a private ntfy server), `api_key` (require `X-API-Key` from the engine), `confirm_window_s` (30), `escalate_after_s` (120), `max_escalations` (3), `hazard_cooldown_s` (300), `heartbeat_timeout_s` (60), `port` (8080).
 
 ## Databricks
-`data/events.jsonl` gets one row per lifecycle step (`detected`, `alerted`, `escalated`, `acknowledged`, `cancelled`, `resolved`, plus detector follow-ups `recovered` and `immobility`) with room, type, confidence and timestamps. Point Auto Loader at it, or upload it, for the trends dashboard (falls by room/time, false-alarm rate, time-to-acknowledge).
+`data/events.jsonl` gets one row per lifecycle step (`detected`, `alerted`, `escalated`, `acknowledged`, `cancelled`, `resolved`, plus detector follow-ups `recovered` and `immobility`) with room, type, confidence and timestamps. Run the repository’s [analytics shipper](../analytics/README.md) to populate the lifecycle table and incident view for dashboard trends. Cancellation rate is not a verified false-alarm rate.
 
 ## Notes
 - Anyone who knows an ntfy.sh topic name can read it. Keep the random name or self-host ntfy with a token.
@@ -90,7 +90,7 @@ The **I'm on my way** button posts `ack <ID>` to `<topic>-ack` on ntfy, and the 
 
 ## Caregiver event review
 
-After helping, post `resolve <ID>` to the caregiver ack topic. Resolving or cancelling a fall or near-fall sends a separate low-priority notification with **Confirmed fall / No fall / Unsure** buttons. Cancellation alone never sets a review outcome. Acknowledging means someone is responding; resolve the incident before reviewing it.
+After helping, post `resolve <ID>` to the caregiver ack topic. Resolving or cancelling a fall or near-fall sends a separate low-priority notification with **Confirmed fall / No fall / Unsure** buttons. Cancellation alone never sets a review outcome. Acknowledging means someone is responding; an acknowledged incident must be resolved before reviewing it. Detector-recovered incidents also accept reviews.
 
 For an optional note or a correction, publish a message to the same ack topic:
 
@@ -112,6 +112,6 @@ Content-Type: application/json
 
 Outcomes are `confirmed_fall`, `no_fall`, or `unsure`. Notes are optional and limited to 2,000 characters; `by` is a non-empty label of at most 200 characters. API reviews inherit the existing API-key configuration. ntfy commands use the shared caregiver topic and record `Caregiver (ntfy)` as the actor, not a verified individual identity. The Python client also exposes `ss.review(incident_id, outcome, note=None, by="caregiver")`.
 
-Cancelled, recovered, and resolved fall/near-fall incidents accept reviews. Reviewing never cancels timers or changes incident status. Corrections append `reviewed` lifecycle rows; identical outcome/note/actor submissions are idempotent. The service sends a save receipt to the primary topic. Retain `data/events.jsonl`: closed incidents can be recovered from this log for review after restart. Active incident/timer recovery remains outside this review feature.
+Cancelled, resolved, or detector-recovered fall/near-fall incidents accept reviews. Reviewing never cancels timers or changes incident status. Corrections append `reviewed` lifecycle rows; identical outcome/note/actor submissions are idempotent. The service sends a save receipt to the primary topic. Retain `data/events.jsonl`: closed incidents can be recovered from this log for review after restart. Active incident/timer recovery remains outside this review feature.
 
 Run local review tests with `python3 -m unittest discover -s alerts/tests -v` from the repository root.
