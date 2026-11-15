@@ -4,7 +4,7 @@ CREATE SCHEMA IF NOT EXISTS safestep;
 
 -- Append-only: one row per lifecycle step of an incident
 -- (detected, alerted, delivered, delivery_failed, escalated, acknowledged,
--- cancelled, resolved). 'alerted' = the service decided to alert;
+-- cancelled, resolved, reviewed). 'alerted' = the service decided to alert;
 -- 'delivered' / 'delivery_failed' = whether ntfy accepted the message.
 CREATE TABLE IF NOT EXISTS safestep.lifecycle_events (
   row_id             STRING,     -- sha1 of the source line; makes re-ingest idempotent
@@ -40,6 +40,17 @@ WITH ranked AS (
   FROM safestep.lifecycle_events
 ),
 latest AS (SELECT * FROM ranked WHERE rn = 1),
+-- Reviews use the existing raw JSON column; later delivery callbacks cannot erase them.
+reviews AS (
+  SELECT incident_id,
+         get_json_object(raw, '$.review_outcome') AS review_outcome,
+         get_json_object(raw, '$.review_note') AS review_note,
+         get_json_object(raw, '$.reviewed_by') AS reviewed_by,
+         CAST(get_json_object(raw, '$.reviewed_at') AS TIMESTAMP) AS reviewed_at,
+         ROW_NUMBER() OVER (PARTITION BY incident_id ORDER BY logged_at DESC, row_id DESC) AS rn
+  FROM safestep.lifecycle_events
+  WHERE lifecycle = 'reviewed'
+),
 agg AS (
   SELECT incident_id,
          MIN(CASE WHEN lifecycle = 'alerted'      THEN logged_at END) AS alerted_at,
@@ -67,6 +78,11 @@ SELECT l.incident_id,
        a.delivered_at,
        a.acknowledged_at,
        a.cancelled_at,
-       a.escalations
+       a.escalations,
+       r.review_outcome,
+       r.review_note,
+       r.reviewed_by,
+       r.reviewed_at
 FROM latest l
-JOIN agg a ON l.incident_id = a.incident_id;
+JOIN agg a ON l.incident_id = a.incident_id
+LEFT JOIN reviews r ON l.incident_id = r.incident_id AND r.rn = 1;

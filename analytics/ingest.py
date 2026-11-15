@@ -113,6 +113,7 @@ def row_to_record(line: bytes) -> dict | None:
         "immobility_seconds": _num(row.get("immobility_seconds"), float),
         "actor": _str(row.get("by")),
         "outcome": _str(row.get("outcome")),
+        # Preserve review fields and future lifecycle extensions without table migration.
         "raw": json.dumps(row, separators=(",", ":")),
     }
 
