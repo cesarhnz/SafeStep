@@ -1,0 +1,16 @@
+{
+  "toolkit": "Explainroo",
+  "version": "0.6.0",
+  "source": "https://github.com/vincentsch/explainroo",
+  "resolution": [
+    1920,
+    1080
+  ],
+  "fps": 60,
+  "duration": 60,
+  "narration": "Local Kokoro af_heart",
+  "alignment": "Local Whisper base.en",
+  "music": "Original deterministic stereo synthesis",
+  "renderer": "Chrome Canvas / FFmpeg H.264",
+  "motionBlur": "6 temporal samples per output frame"
+}

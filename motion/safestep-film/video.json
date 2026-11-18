@@ -1,0 +1,54 @@
+{
+  "title": "SafeStep \u2014 Every Step Matters",
+  "defaults": "0.6",
+  "theme": "safestep-theme.json",
+  "size": "1920x1080",
+  "fps": 60,
+  "language": "en",
+  "voice": "af_heart",
+  "speed": 1.02,
+  "targetSeconds": 60,
+  "sentenceGap": 0.18,
+  "paragraphGap": 0.3,
+  "end": 0.7,
+  "music": {
+    "src": "assets/every-step-score.wav",
+    "volume": 0.51,
+    "loop": false,
+    "credit": "Every Step \u2014 original locally synthesized score, created for SafeStep."
+  },
+  "sfx": "minimal",
+  "captions": false,
+  "camera": "still",
+  "motionBlur": true,
+  "watermark": false,
+  "transition": "cut",
+  "cover": "finale@2",
+  "heard": {
+    "SafeStep": [
+      "safe step",
+      "safestep"
+    ],
+    "Databricks": [
+      "data bricks",
+      "databricks"
+    ]
+  },
+  "fonts": [
+    {
+      "family": "Plus Jakarta Sans",
+      "src": "assets/fonts/PlusJakartaSans-600-latin.woff2",
+      "weight": 600
+    },
+    {
+      "family": "Instrument Serif",
+      "src": "assets/fonts/InstrumentSerif-400-normal-latin.woff2",
+      "weight": 400
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono-400-latin.woff2",
+      "weight": 400
+    }
+  ]
+}

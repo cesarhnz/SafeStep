@@ -1,0 +1,1 @@
+{"extends":"midnight","name":"safestep-film","dark":true,"bg":"#091F1B","ink":"#F5F2E9","muted":"#B8C7BB","background":"plain","accent":"green","colors":{"green":"#D7F58B","orange":"#E8AB89"},"fonts":{"display":{"family":"Inter","weight":600},"body":{"family":"Inter","weight":400}},"transition":"cut","music":"warm"}
